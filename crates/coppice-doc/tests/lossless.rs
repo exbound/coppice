@@ -467,3 +467,18 @@ fn attribute_line_ends_are_normalized_but_the_source_is_not() {
     assert_eq!(doc.text(&attr.value_span), "x\r\ny\rz\tw&#13;");
     assert_eq!(doc.render(), src);
 }
+
+#[test]
+fn nesting_is_capped_at_max_depth() {
+    let deep = |n: usize| format!("{}{}", "<a>".repeat(n), "</a>".repeat(n));
+    let ok = deep(coppice_doc::MAX_DEPTH);
+    assert_eq!(Document::parse(ok.as_bytes()).unwrap().render(), ok);
+    let too_deep = deep(coppice_doc::MAX_DEPTH + 1);
+    assert_eq!(
+        Document::parse(too_deep.as_bytes()).unwrap_err(),
+        ParseError::Unsupported {
+            offset: 3 * coppice_doc::MAX_DEPTH,
+            message: format!("elements nested deeper than {}", coppice_doc::MAX_DEPTH),
+        }
+    );
+}

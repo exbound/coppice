@@ -114,6 +114,15 @@ pub enum DiagnosticKind {
     IncompleteModel,
     /// More than one `<TreeNodesModel>` block; their entries are merged.
     DuplicateModelsBlock,
+    /// A model entry whose `ID` was already declared; the first one is used.
+    DuplicateModel,
+    /// A model entry whose `ID` is a built-in node of BehaviorTree.CPP; the
+    /// library uses its built-in, so the declaration has no effect.
+    ModelShadowsBuiltin,
+    /// An `<Action|Condition|Control|Decorator>` node without an `ID`, or a
+    /// node written with its own tag that carries an `ID` attribute; the
+    /// library refuses both (BT 4.9.0 `src/xml_parsing.cpp:560-563,763-766`).
+    MisplacedNodeId,
 }
 
 /// A condition worth reporting, at a byte offset in the source.
@@ -162,15 +171,53 @@ pub const BUILTIN_LEAVES: &[&str] = &[
     "WasEntryUpdated",
 ];
 
-/// Attributes any node may carry that are not ports (spec §2.1): the
-/// instance name, the subtree ID, auto-remapping (both dialects' spellings),
-/// the pre- and post-condition scripts, and runtime metadata.
+/// The other node types BehaviorTree.CPP 4.9.0 registers: its Controls and
+/// Decorators, which may have children (BT 4.9.0 `src/bt_factory.cpp:118-173`).
+pub const BUILTIN_BRANCHES: &[&str] = &[
+    "Fallback",
+    "AsyncFallback",
+    "Sequence",
+    "AsyncSequence",
+    "SequenceWithMemory",
+    "SequenceStar",
+    "Parallel",
+    "ParallelAll",
+    "ReactiveSequence",
+    "ReactiveFallback",
+    "IfThenElse",
+    "WhileDoElse",
+    "TryCatch",
+    "Inverter",
+    "RetryUntilSuccessful",
+    "KeepRunningUntilFailure",
+    "Repeat",
+    "Timeout",
+    "Delay",
+    "RunOnce",
+    "ForceSuccess",
+    "ForceFailure",
+    "SubTree",
+    "Precondition",
+    "Switch2",
+    "Switch3",
+    "Switch4",
+    "Switch5",
+    "Switch6",
+    "LoopInt",
+    "LoopBool",
+    "LoopDouble",
+    "LoopString",
+    "SkipUnlessUpdated",
+    "WaitValueUpdate",
+];
+
+/// The attribute names BehaviorTree.CPP reserves: never ports (BT 4.9.0
+/// `include/behaviortree_cpp/tree_node.h:78-94`,
+/// `src/basic_types.cpp:505-522`).
 pub const RESERVED_ATTRIBUTES: &[&str] = &[
     "name",
     "ID",
     "_autoremap",
-    "__autoremap",
-    "__shared_blackboard",
     "_failureIf",
     "_successIf",
     "_skipIf",
@@ -179,9 +226,27 @@ pub const RESERVED_ATTRIBUTES: &[&str] = &[
     "_onFailure",
     "_onSuccess",
     "_post",
-    "_uid",
-    "_fullpath",
 ];
+
+/// Whether BehaviorTree.CPP would treat an attribute name as a port name:
+/// it starts with an ASCII letter, contains none of the library's forbidden
+/// characters, and is not reserved (BT 4.9.0 `src/basic_types.cpp:485-530`).
+/// Any other attribute (`_uid`, `_fullpath`, `__shared_blackboard`, `a.b`, …)
+/// is kept by the library without a port check, so coppice does not check it
+/// either.
+pub fn is_port_name(name: &str) -> bool {
+    const FORBIDDEN: &[char] = &[
+        ' ', '\t', '\n', '\r', '<', '>', '&', '"', '\'', '/', '\\', ':', '*', '?', '|', '.',
+    ];
+    name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && !name.contains(FORBIDDEN)
+        && !RESERVED_ATTRIBUTES.contains(&name)
+}
+
+/// The element names under which BehaviorTree.CPP reads the node type from
+/// the `ID` attribute instead of the element name (BT 4.9.0
+/// `src/xml_parsing.cpp:557-559,605`).
+const EXPLICIT_FORMS: &[&str] = &["Action", "Condition", "Control", "Decorator"];
 
 /// A behavior-tree document: a [`Document`] whose top-level element is
 /// `<root>`.
@@ -361,7 +426,10 @@ impl TreeDocument {
                     out.push(Diagnostic {
                         kind: DiagnosticKind::IncompleteModel,
                         offset: entry.span.start,
-                        message: format!("the <{}> model entry has no ID attribute", entry.name),
+                        message: format!(
+                            "the <{}> model entry has no ID, or an empty one",
+                            entry.name
+                        ),
                     });
                     continue;
                 }
@@ -384,9 +452,39 @@ impl TreeDocument {
                 }
             }
         }
-        // Node-level checks, inside every <BehaviorTree> child of <root>.
-        // Each declared model is its ID, kind and port names.
+        // Duplicate and shadowing declarations, from the parsed models.
         let models = self.models();
+        let mut entries = root
+            .child_elements()
+            .filter(|e| e.name == "TreeNodesModel")
+            .flat_map(|b| b.child_elements())
+            .filter(|e| {
+                model_kind(&e.name).is_some() && e.attribute("ID").is_some_and(|i| !i.is_empty())
+            });
+        for (n, m) in models.iter().enumerate() {
+            let Some(entry) = entries.next() else { break };
+            if models[..n].iter().any(|earlier| earlier.id == m.id) {
+                out.push(Diagnostic {
+                    kind: DiagnosticKind::DuplicateModel,
+                    offset: entry.span.start,
+                    message: format!(
+                        "model {} is declared more than once; the first is used",
+                        m.id
+                    ),
+                });
+            }
+            if is_builtin(&m.id) {
+                out.push(Diagnostic {
+                    kind: DiagnosticKind::ModelShadowsBuiltin,
+                    offset: entry.span.start,
+                    message: format!(
+                        "model {} names a built-in node; the library uses its built-in",
+                        m.id
+                    ),
+                });
+            }
+        }
+        // Node-level checks, inside every <BehaviorTree> child of <root>.
         for tree in self.behavior_trees() {
             walk(tree, &models, &mut out);
         }
@@ -419,7 +517,8 @@ fn model_kind(name: &str) -> Option<ModelKind> {
 }
 
 /// The port description: the element's text content with references
-/// decoded — its raw `Text` spans concatenated and decoded, and any
+/// decoded and line ends normalized — its raw `Text` spans concatenated and
+/// decoded, and any
 /// `CData` span with its `<![CDATA[ … ]]>` delimiters stripped and kept
 /// literally. Comments and child elements are not port text. The parser has
 /// already validated every reference in the text, so decoding cannot fail.
@@ -439,7 +538,7 @@ fn port_description(doc: &Document, port: &Element) -> String {
         {
             // CDATA is literal: no references inside it.
             out.push_str(inner);
-        } else if let Ok(decoded) = decode(raw, span.start, false) {
+        } else if let Ok(decoded) = decode(raw, span.start, true) {
             out.push_str(&decoded);
         }
     }
@@ -462,59 +561,87 @@ fn metadata_pairs(entry: &Element) -> Vec<(String, String)> {
     out
 }
 
-/// Visit `element` and every element below it, reporting `LeafWithChildren`
-/// and `UnknownPort` where the rules of spec §2.5 and §3.6 fire.
-fn walk(element: &Element, models: &[NodeModel], out: &mut Vec<Diagnostic>) {
-    let is_subtree_spelling = element.name == "SubTree" || element.name == "SubTreePlus";
-    if !is_subtree_spelling {
-        let has_child_element = element.child_elements().next().is_some();
-        let is_builtin_leaf = BUILTIN_LEAVES.contains(&element.name.as_str());
-        let declared = models.iter().find(|m| m.id == element.name);
-        match declared {
-            Some(m) if m.kind.is_leaf() && has_child_element => {
-                out.push(Diagnostic {
-                    kind: DiagnosticKind::LeafWithChildren,
-                    offset: element.span.start,
-                    message: format!(
-                        "the leaf node <{}> has a child element; leaf nodes may not have children",
-                        element.name
-                    ),
-                });
-            }
-            None if is_builtin_leaf && has_child_element => {
-                out.push(Diagnostic {
-                    kind: DiagnosticKind::LeafWithChildren,
-                    offset: element.span.start,
-                    message: format!(
-                        "the leaf node <{}> has a child element; leaf nodes may not have children",
-                        element.name
-                    ),
-                });
-            }
-            _ => {}
-        }
-        if let Some(m) = declared
-            && !matches!(m.kind, ModelKind::SubTree)
-        {
-            for a in &element.attributes {
-                if RESERVED_ATTRIBUTES.contains(&a.name.as_str()) {
-                    continue;
-                }
-                if m.ports.iter().any(|p| p.name == a.name) {
-                    continue;
-                }
-                out.push(Diagnostic {
-                    kind: DiagnosticKind::UnknownPort,
-                    offset: a.name_span.start,
-                    message: format!(
-                        "attribute '{}' is neither a declared port nor a reserved attribute of the <{}> model",
-                        a.name, element.name
-                    ),
-                });
-            }
-        }
+fn is_builtin(name: &str) -> bool {
+    BUILTIN_LEAVES.contains(&name) || BUILTIN_BRANCHES.contains(&name)
+}
+
+/// Visit `tree` and every element below it, iteratively (no recursion, so
+/// nesting depth cannot exhaust the stack), reporting `LeafWithChildren`,
+/// `UnknownPort` and `MisplacedNodeId` as the library's loader would decide
+/// them (spec §2.5, §3.6; BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`).
+fn walk(tree: &Element, models: &[NodeModel], out: &mut Vec<Diagnostic>) {
+    let mut stack: Vec<&Element> = tree.child_elements().collect();
+    stack.reverse();
+    while let Some(element) = stack.pop() {
+        let mut children: Vec<&Element> = element.child_elements().collect();
+        children.reverse();
+        stack.extend(children);
+        check_node(element, models, out);
     }
-    for child in element.child_elements() {
-        walk(child, models, out);
+}
+
+fn check_node(element: &Element, models: &[NodeModel], out: &mut Vec<Diagnostic>) {
+    if element.name == "SubTree" || element.name == "SubTreePlus" {
+        return;
+    }
+    let explicit = EXPLICIT_FORMS.contains(&element.name.as_str());
+    let type_name = if explicit {
+        match element.attribute("ID").filter(|i| !i.is_empty()) {
+            Some(id) => id,
+            None => {
+                out.push(Diagnostic {
+                    kind: DiagnosticKind::MisplacedNodeId,
+                    offset: element.span.start,
+                    message: format!("<{}> has no ID naming its node type", element.name),
+                });
+                return;
+            }
+        }
+    } else {
+        if let Some(a) = element.attributes.iter().find(|a| a.name == "ID") {
+            out.push(Diagnostic {
+                kind: DiagnosticKind::MisplacedNodeId,
+                offset: a.name_span.start,
+                message: format!("ID is not allowed on a <{}> node", element.name),
+            });
+        }
+        element.name.as_str()
+    };
+    // The library decides the kind from its registered nodes; a declared
+    // model only counts for a name the library does not register itself.
+    let declared = if is_builtin(type_name) {
+        None
+    } else {
+        models.iter().find(|m| m.id == type_name)
+    };
+    let leaf = BUILTIN_LEAVES.contains(&type_name) || declared.is_some_and(|m| m.kind.is_leaf());
+    if leaf && element.child_elements().next().is_some() {
+        out.push(Diagnostic {
+            kind: DiagnosticKind::LeafWithChildren,
+            offset: element.span.start,
+            message: format!(
+                "the leaf node {type_name} has a child element; leaf nodes may not have children"
+            ),
+        });
+    }
+    if let Some(m) = declared
+        && m.kind != ModelKind::SubTree
+    {
+        for a in &element.attributes {
+            if (explicit && a.name == "ID") || !is_port_name(&a.name) {
+                continue;
+            }
+            if m.ports.iter().any(|p| p.name == a.name) {
+                continue;
+            }
+            out.push(Diagnostic {
+                kind: DiagnosticKind::UnknownPort,
+                offset: a.name_span.start,
+                message: format!(
+                    "attribute '{}' is not a declared port of model {type_name}",
+                    a.name
+                ),
+            });
+        }
     }
 }

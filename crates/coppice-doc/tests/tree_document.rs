@@ -309,3 +309,208 @@ fn subtree_spellings_are_never_checked_even_if_declared() {
       <TreeNodesModel><Action ID="SubTreePlus"><input_port name="only"/></Action></TreeNodesModel></root>"#;
     assert!(kinds(&view(src)).is_empty());
 }
+
+fn only(t: &TreeDocument, k: DiagnosticKind) -> Vec<coppice_doc::Diagnostic> {
+    t.diagnostics()
+        .into_iter()
+        .filter(|d| d.kind == k)
+        .collect()
+}
+
+#[test]
+fn explicit_node_form_is_looked_up_by_id() {
+    let t = view(br#"<root BTCPP_format="3"><BehaviorTree ID="T"><Action ID="AlwaysSuccess"><Action ID="Script" code="x"/></Action></BehaviorTree></root>"#);
+    let leaf = only(&t, DiagnosticKind::LeafWithChildren);
+    assert_eq!(leaf.len(), 1);
+    assert!(t.document().source()[leaf[0].offset..].starts_with("<Action ID=\"AlwaysSuccess\""));
+
+    let t = view(br#"<root BTCPP_format="4"><BehaviorTree ID="T"><Action ID="Say" msg="a" tone="x"/></BehaviorTree>
+      <TreeNodesModel><Action ID="Say"><input_port name="msg"/></Action></TreeNodesModel></root>"#);
+    let d = t.diagnostics();
+    assert_eq!(
+        kinds(&t),
+        [DiagnosticKind::UnknownPort],
+        "ID selects the type and is not a port"
+    );
+    assert!(t.document().source()[d[0].offset..].starts_with("tone="));
+
+    let t = view(br#"<root BTCPP_format="4"><BehaviorTree ID="T"><Action/></BehaviorTree></root>"#);
+    assert_eq!(kinds(&t), [DiagnosticKind::MisplacedNodeId]);
+}
+
+#[test]
+fn built_in_kinds_win_over_declared_models() {
+    let t = view(br#"<root BTCPP_format="4"><BehaviorTree ID="T"><AlwaysSuccess><Script code="x"/></AlwaysSuccess></BehaviorTree>
+      <TreeNodesModel><Control ID="AlwaysSuccess"/></TreeNodesModel></root>"#);
+    assert_eq!(
+        kinds(&t),
+        [
+            DiagnosticKind::LeafWithChildren,
+            DiagnosticKind::ModelShadowsBuiltin
+        ]
+    );
+    let t = view(br#"<root BTCPP_format="4"><BehaviorTree ID="T"><Sequence><Script code="x"/></Sequence></BehaviorTree>
+      <TreeNodesModel><Action ID="Sequence"/></TreeNodesModel></root>"#);
+    assert_eq!(
+        kinds(&t),
+        [DiagnosticKind::ModelShadowsBuiltin],
+        "Sequence stays a Control"
+    );
+}
+
+#[test]
+fn only_port_shaped_attribute_names_are_checked() {
+    let t = view(br#"<root BTCPP_format="4"><BehaviorTree ID="T"><Say msg="a" _description="d" __shared_blackboard="1" _foo="z" a.b="q" _uid="3" tone="t"/></BehaviorTree>
+      <TreeNodesModel><Action ID="Say"><input_port name="msg"/></Action></TreeNodesModel></root>"#);
+    let d = t.diagnostics();
+    assert_eq!(kinds(&t), [DiagnosticKind::UnknownPort]);
+    assert!(t.document().source()[d[0].offset..].starts_with("tone="));
+    assert!(coppice_doc::is_port_name("tone"));
+    for n in ["_while", "name", "ID", "a.b", "a:b", "1x", "_x", ""] {
+        assert!(!coppice_doc::is_port_name(n), "{n:?}");
+    }
+
+    let t = view(
+        br#"<root BTCPP_format="4"><BehaviorTree ID="T"><Say ID="x" msg="a"/></BehaviorTree>
+      <TreeNodesModel><Action ID="Say"><input_port name="msg"/></Action></TreeNodesModel></root>"#,
+    );
+    let d = t.diagnostics();
+    assert_eq!(kinds(&t), [DiagnosticKind::MisplacedNodeId]);
+    assert!(t.document().source()[d[0].offset..].starts_with("ID="));
+}
+
+#[test]
+fn diagnostics_are_sorted_by_offset_across_sources() {
+    // Tree before the model block: unsorted output would list the model
+    // diagnostic first.
+    let t = view(br#"<root BTCPP_format="4"><BehaviorTree ID="T"><AlwaysSuccess><A/></AlwaysSuccess></BehaviorTree>
+      <TreeNodesModel><Widget ID="W"/></TreeNodesModel></root>"#);
+    assert_eq!(
+        kinds(&t),
+        [
+            DiagnosticKind::LeafWithChildren,
+            DiagnosticKind::UnknownModelKind
+        ]
+    );
+}
+
+#[test]
+fn duplicate_model_ids_are_reported_and_the_first_wins() {
+    let t = view(br#"<root BTCPP_format="4"><BehaviorTree ID="T"><Foo a="1"><X/></Foo></BehaviorTree>
+      <TreeNodesModel><Control ID="Foo"><input_port name="a"/></Control><Action ID="Foo"/></TreeNodesModel></root>"#);
+    let d = t.diagnostics();
+    assert_eq!(kinds(&t), [DiagnosticKind::DuplicateModel]);
+    assert!(t.document().source()[d[0].offset..].starts_with("<Action ID=\"Foo\""));
+}
+
+#[test]
+fn view_details_the_first_tests_did_not_pin() {
+    let t = view(&fixture("reference/o-answers/out-o5/in-o5-single.xml"));
+    assert_eq!(t.version(), Some("4.10"));
+
+    let t = view(br#"<root BTCPP_format="4"><BehaviorTree ID="T"><Dec><A/></Dec></BehaviorTree>
+      <TreeNodesModel><Decorator ID="Dec"><MetadataFields><Other k="v"/><Metadata a="1"/></MetadataFields></Decorator></TreeNodesModel>
+      <Models><Action ID="Stray"/></Models></root>"#);
+    assert!(kinds(&t).is_empty(), "a Decorator is not a leaf");
+    let m = t.models();
+    assert_eq!(m.len(), 1, "models come only from <TreeNodesModel>");
+    assert!(
+        !m[0].has_description,
+        "only <description> sets has_description"
+    );
+    assert_eq!(
+        m[0].metadata,
+        [("a".to_owned(), "1".to_owned())],
+        "only <Metadata> children"
+    );
+
+    for leaf in coppice_doc::BUILTIN_LEAVES {
+        let src = format!(
+            r#"<root BTCPP_format="4"><BehaviorTree ID="T"><{leaf}><A/></{leaf}></BehaviorTree></root>"#
+        );
+        assert_eq!(
+            kinds(&view(src.as_bytes())),
+            [DiagnosticKind::LeafWithChildren],
+            "{leaf}"
+        );
+    }
+    for branch in coppice_doc::BUILTIN_BRANCHES {
+        if *branch == "SubTree" {
+            continue;
+        }
+        let src = format!(
+            r#"<root BTCPP_format="4"><BehaviorTree ID="T"><{branch}><A/></{branch}></BehaviorTree></root>"#
+        );
+        assert!(kinds(&view(src.as_bytes())).is_empty(), "{branch}");
+    }
+
+    let t = view(b"<root BTCPP_format=\"4\"><TreeNodesModel><Action ID=\"A\"><input_port name=\"p\">x\r\ny</input_port></Action></TreeNodesModel></root>");
+    assert_eq!(
+        t.models()[0].ports[0].description,
+        "x\ny",
+        "line ends normalized"
+    );
+}
+
+/// The built-in lists, pinned to BehaviorTree.CPP 4.9.0's registrations
+/// (`src/bt_factory.cpp:118-173`), so an entry cannot go missing unnoticed.
+#[test]
+fn built_in_lists_match_the_library_registrations() {
+    let mut leaves = coppice_doc::BUILTIN_LEAVES.to_vec();
+    leaves.sort_unstable();
+    assert_eq!(
+        leaves,
+        [
+            "AlwaysFailure",
+            "AlwaysSuccess",
+            "Script",
+            "ScriptCondition",
+            "SetBlackboard",
+            "Sleep",
+            "UnsetBlackboard",
+            "WasEntryUpdated",
+        ]
+    );
+    let mut branches = coppice_doc::BUILTIN_BRANCHES.to_vec();
+    branches.sort_unstable();
+    assert_eq!(
+        branches,
+        [
+            "AsyncFallback",
+            "AsyncSequence",
+            "Delay",
+            "Fallback",
+            "ForceFailure",
+            "ForceSuccess",
+            "IfThenElse",
+            "Inverter",
+            "KeepRunningUntilFailure",
+            "LoopBool",
+            "LoopDouble",
+            "LoopInt",
+            "LoopString",
+            "Parallel",
+            "ParallelAll",
+            "Precondition",
+            "ReactiveFallback",
+            "ReactiveSequence",
+            "Repeat",
+            "RetryUntilSuccessful",
+            "RunOnce",
+            "Sequence",
+            "SequenceStar",
+            "SequenceWithMemory",
+            "SkipUnlessUpdated",
+            "SubTree",
+            "Switch2",
+            "Switch3",
+            "Switch4",
+            "Switch5",
+            "Switch6",
+            "Timeout",
+            "TryCatch",
+            "WaitValueUpdate",
+            "WhileDoElse",
+        ]
+    );
+}
