@@ -130,7 +130,7 @@ thin, language-agnostic surface; each repo wires them to its own toolchain:
 docs/engineering-spec.md   the clean-room functional spec this code implements
 docs/setup.md              contributor toolchain setup (kept separate from the
                            research diary, so requirements need not be inferred)
-src/                       implementation
+crates/                    implementation: a Rust workspace (see docs/design-decisions.md D2)
 tests/                     tests and fixtures (see tests/fixtures/README.md)
 .github/workflows/ci.yml   runs `just check` and `just test`
 ```

@@ -94,8 +94,14 @@ error. The CLI uses `anyhow` at its top level only.
 ## D9. Dependency hygiene — Decided
 
 `cargo-deny` in `just check`, with an allow-list of licenses compatible with
-Apache-2.0 distribution. Every dependency is pinned by `Cargo.lock`, which is
-committed.
+Apache-2.0 distribution. It joins the gate with the first third-party
+dependency; until then there is nothing for it to check. Every dependency is
+pinned by `Cargo.lock`, which is committed, and every cargo command in the
+gate runs with `--locked`.
+
+The Rust toolchain is pinned exactly in `rust-toolchain.toml`, so CI and
+local builds use the same compiler and the same lints. Moving it is a
+deliberate change of its own.
 
 ## D10. Command-line surface — Provisional
 
