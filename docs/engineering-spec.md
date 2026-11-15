@@ -11,18 +11,25 @@ Library and architecture choices are in
   vendor's 30-day PRO trial for the hook features), and BehaviorTree.CPP
   **4.9.0** as the pinned open-source library. BehaviorTree.CPP 4.11.0 is the
   vendor's pairing; its deltas are listed under §6.
-- **Research record (the only sources of this spec):** the Groot2 dossier
-  (`dossiers/groot2.md`) and the compatibility-surface study
-  (`docs/groot2-compat-surface.md`) in
-  [exbound/research](https://github.com/exbound/research), at commit
-  `bc319c2`. Section references below are written `dossier §…` and
-  `surface §…`.
+- **Sources — the only ones this spec draws on:**
+  1. the public research record in
+     [exbound/research](https://github.com/exbound/research) at commit
+     `bc319c2`: the Groot2 dossier (`dossiers/groot2.md`), cited as
+     `dossier WP1`…`G-6` by work package, and the compatibility-surface
+     study (`docs/groot2-compat-surface.md`), cited as `surface §1`…`§6`;
+  2. the BehaviorTree.CPP **4.9.0** source (MIT, the open-source library,
+     not the proprietary product), cited as `BT 4.9.0 <path>:<line>`. It
+     settles what the publisher and the file writers do, which is
+     open-source behavior, not reference-product behavior.
+
+  Anything about the **reference product's** own behavior comes from (1)
+  only.
 - **Capabilities in scope here:** C2 data (`.btlog`), C3 document (projects
   and tree XML, both dialects), C6 programmability (the live-monitor client).
   C8 (the graphical application) is out of scope for v1.
 
-Conventions: **ESTABLISHED** = stated in the research record, with its
-section; **HYPOTHESIS** = a reading of the record that a test must confirm;
+Conventions: **ESTABLISHED** = stated in a source above, with its citation;
+**HYPOTHESIS** = an inference from a cited source that a test must confirm;
 **OPEN** = not in the public record, listed in §7. Byte layouts are
 little-endian throughout.
 
@@ -41,11 +48,11 @@ list.
 | F2 | Parse tree XML, v3 dialect | C3 | yes (dossier G-5) | none | none | §2.2 |
 | F3 | Parse `.btproj` projects and resolve `<include>` | C3 | yes (surface §3, dossier WP1) | none | none | §2.3 |
 | F4 | Parse `<TreeNodesModel>`, including tolerated extensions | C3 | yes (surface §3) | none | none | §2.4 |
-| F5 | Lossless round-trip: load then save unmodified, byte-identical | C3 | yes (dossier G-1) | none | none | §3.1 |
+| F5 | Lossless round-trip: load then save unmodified, byte-identical | C3 | partial (dossier G-1; wider properties are O-9) | none | none | §3.1 |
 | F6 | Reference save, V4: add the `BTCPP_version` stamp | C3 | partial — placement bytes OPEN | none | none | §3.2 |
-| F7 | Reference save, V3: add nothing; the TreeNodesModel drop | C3 | partial — drop rule OPEN | none | none | §3.3 |
+| F7 | Reference save, V3: in-place save adds nothing (no stamp) | C3 | yes (dossier G-1) | none | none | §3.3 |
 | F8 | Save-as: rewrite include paths relative to the new location | C3 | partial — algorithm OPEN | none | none | §3.4 |
-| F9 | Save-as of a single tree: wrap as a one-include project | C3 | yes (dossier G-1) | none | none | §3.5 |
+| F9 | Save-as of a single tree: wrap as a one-include project | C3 | partial — wrapper bytes OPEN | none | none | §3.5 |
 | F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | none | none | §2.5 |
 | F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | none | none | §4.1 |
 | F12 | Write `.btlog` | C2 | yes (surface §1) | none | none | §4.2 |
@@ -60,7 +67,7 @@ list.
 |---|---------|------|---------------|-------|
 | L1 | Hooks: breakpoint and replace-node insert/remove, dump, remove-all, disable-all, unlock | C6 | yes (surface §2, dossier G-3) | §5.7 states the contract now |
 | L2 | Read `.db3` recordings | C2 | yes (surface §4) | schema fixed; no fixture yet |
-| L3 | Editing operations on the document model | C3 | n/a | must preserve F5 for untouched regions |
+| L3 | Editing operations on the document model, including fresh V3 saves and their TreeNodesModel drop | C3 | partial (dossier G-5) | must preserve F5 for untouched regions; the drop rule is O-3 |
 | L4 | Graphical application (canvas, monitor, replay, blackboard) | C8 | partial | after a GUI spike; not specified here |
 | L5 | v3 binary wire translator (legacy publisher to v4 client) | C6 | partial (surface §2 cross-check) | the v3 wire is not needed by the reference client (dossier G-5) |
 
@@ -73,8 +80,11 @@ behavior, and vendor UI text.
 ### 2.1 Tree XML, v4 dialect (F1) — ESTABLISHED, surface §5
 
 - A document is `<root …>` containing, in any order: zero or more
-  `<include path="…"/>`, one or more `<BehaviorTree ID="…">`, and at most one
-  `<TreeNodesModel>`.
+  `<include path="…"/>`, zero or more `<BehaviorTree ID="…">`, and at most
+  one `<TreeNodesModel>`. A tree file normally holds at least one
+  `<BehaviorTree>` (surface §5); a project file may hold none, as the
+  record's own `.btproj` example shows (surface §3). Zero trees is therefore
+  valid input, not an error.
 - `<root>` attributes seen in the record: `BTCPP_format`, `project_name`,
   `BTCPP_version`. **`BTCPP_format` is advisory**: a missing attribute is a
   warning, not an error, and its value is not checked (surface §5,
@@ -102,9 +112,12 @@ spellings and never translate one into the other.
 
 - A `.btproj` is a tree-XML document whose `<root>` carries `project_name`
   and which typically holds `<include>` references and a `<TreeNodesModel>`.
-- `<include path>` is resolved relative to the including file's directory.
-  All 15 files of the reference's own sample corpus resolve this way
-  (dossier WP1).
+- `<include path>` is resolved relative to the including file's directory:
+  the library sets the base path to the loaded file's parent directory and
+  re-bases it for each nested include (BT 4.9.0
+  `src/xml_parsing.cpp:294,419-425`). The reference resolves every include
+  in its own sample corpus (dossier WP1); that its rule is the same is a
+  HYPOTHESIS, which O-4's fixtures will exercise.
 - A project may hold multiple trees across files; the reference loads a
   7-tree, 10-model project (dossier WP3). Loading builds one project model
   over all included documents, each document keeping its own bytes (§3.1).
@@ -123,18 +136,32 @@ spellings and never translate one into the other.
 - `type` is omitted for untyped ports; `default` is omitted when empty; the
   element text is the port description.
 - Subtree models may declare port defaults (subtree default remappings).
-- Tolerated extensions written by the reference: an `editable="true"`
-  attribute on model elements, and a `<description>` child element. Both
-  must parse and must survive F5. Whether the reference preserves them on
-  its own save is OPEN (§7, O-6).
+- Tolerated extensions seen in Groot2-era files: an `editable="true"`
+  attribute on model elements, and a `<description>` child element
+  (surface §3). Both must parse, and both survive coppice's lossless save
+  (F5).
+- The reference does **not** preserve `<description>` on save: a public
+  issue on the vendor's tracker, cited in surface §3, reports it "not
+  displayed, not preserved on save". So the reference-compatible save
+  (§3.2) must drop it. OPEN: the exact bytes left behind where it was, and
+  whether `editable` is preserved (§7, O-6).
 
 ### 2.5 Dialect detection and diagnostics (F10)
 
-- **Dialect** is decided from content, since `BTCPP_format` is advisory:
-  `BTCPP_format="3"`, or a v3-only node (`SetBlackboard`, `SubTreePlus`),
-  means v3; otherwise v4. HYPOTHESIS: this agrees with the reference's own
-  mismatch detection (dossier WP3 records that it offers a mode switch on
-  mismatch, not the rule it applies).
+- **Dialect is a mode the user holds, as in the reference** (dossier WP3:
+  the reference offers a switch to V3 on mismatch and retitles the
+  project). Detection only *suggests* the mode, and never changes it
+  silently:
+  - `BTCPP_format="3"` suggests v3, and `BTCPP_format="4"` suggests v4;
+  - with no `BTCPP_format`, a `SubTreePlus` element suggests v3, since the
+    v4 library registers no node of that name (BT 4.9.0 `src/bt_factory.cpp`
+    has none);
+  - anything else suggests v4.
+
+  `SetBlackboard` is **not** a v3 marker: v4 registers it as a built-in
+  (BT 4.9.0 `src/bt_factory.cpp:152`). That this detection agrees with the
+  reference's own mismatch check is a HYPOTHESIS; the record does not state
+  the reference's rule.
 - **Port-versus-model check:** the reference validates instance ports
   against the declared model when it loads a log, and rejects a node whose
   port name does not match (dossier WP3). coppice reports such mismatches
@@ -153,16 +180,20 @@ from the record.
 
 ### 3.1 Lossless round-trip (F5) — ESTABLISHED, dossier G-1
 
-Outside the specific changes in §3.2–3.4, the reference round-trips
-**byte-exact**: the `<TreeNodesModel>` block, comments, attribute order,
-indentation and XML escaping. A V3 in-place round-trip is byte-identical to
-its input. So:
+**What the record establishes about the reference:** outside the specific
+changes in §3.2–3.4, it round-trips the `<TreeNodesModel>` block, comments,
+attribute order, indentation and XML escaping byte-exact, on the files it
+was tested with. A V3 in-place round-trip is byte-identical to its input
+(dossier G-1).
 
-- Loading then saving an unmodified document with no stamp change must
-  reproduce the input bytes exactly: attribute order and quoting,
-  whitespace inside and between tags, comments, the XML declaration,
-  character references and entity spelling, line endings, and the presence
-  or absence of a trailing newline.
+**coppice's own requirement (F5) is wider.** Loading then saving an
+unmodified document in lossless mode reproduces the input bytes exactly,
+including properties the record does not cover: attribute quoting,
+whitespace inside and between tags, the XML declaration, character
+references and entity spelling, line endings (LF or CRLF), and the
+presence or absence of a trailing newline. Whether the *reference*
+preserves those properties is untested (§7, O-9); until it is, F6–F9
+fixtures avoid relying on them.
 - **Test:** byte equality of the output against the input (or against the
   reference's saved form where §3.2–3.4 apply). A normalized or semantic
   comparison does not pass.
@@ -180,19 +211,25 @@ its input. So:
   and character, position relative to the other attributes), and the
   behavior when `BTCPP_version` is already present, with the same or a
   different value (§7, O-1, O-2).
+- The reference drops `<description>` elements from node models on save
+  (§2.4, surface §3); the bytes left behind are O-6.
+- OPEN: which files a project save writes. The record says a bare tree file
+  is rewritten only when its content was modified (dossier G-1), so an
+  unmodified included tree file is probably left untouched, stamp included.
+  That is a HYPOTHESIS until O-8 is answered.
 - coppice also offers a **lossless save** (F5 with no stamp), as an explicit
   option. The reference-compatible save is the default.
 
-### 3.3 Reference save, V3 (F7) — ESTABLISHED in part, dossier G-1/G-5
+### 3.3 Reference save, V3 (F7) — ESTABLISHED, dossier G-1
 
-- V3 adds **nothing** to `<root>`; an in-place round-trip is byte-identical.
-- A **fresh** V3 save declares `BTCPP_format="3"`, preserves `SubTree`
-  spelling, and embeds **no** built-in node models in `<TreeNodesModel>`.
-  The record adds that "only models loaded from included files get
-  embedded". OPEN: the exact rule, as an input-to-output mapping (§7, O-3).
-- "Fresh save" means saving a document created in the editor, so it
-  belongs with L3. F7's v1 obligation is the byte-identical in-place
-  round-trip.
+- In V3 mode the reference-compatible save adds **nothing** to `<root>`
+  (no `BTCPP_version` stamp), and an in-place round-trip is byte-identical.
+  What distinguishes F7 from F5 is the mode: the same document saved in V4
+  mode gets the stamp (F6), and in V3 mode it must not.
+- Fresh V3 saves of documents created in the editor are L3, not v1. The
+  record (dossier G-5) says they declare `BTCPP_format="3"`, preserve
+  `SubTree` spelling, embed no built-in node models, and embed "only models
+  loaded from included files". The exact drop rule is OPEN (§7, O-3).
 
 ### 3.4 Save-as and include rewriting (F8) — ESTABLISHED in part, dossier G-1
 
@@ -202,7 +239,7 @@ its input. So:
 - OPEN: `..` segments versus other forms, the path separator, and whether
   an absolute input path stays absolute (§7, O-4).
 
-### 3.5 Single-tree save-as (F9) — ESTABLISHED, dossier G-1
+### 3.5 Single-tree save-as (F9) — ESTABLISHED in part, dossier G-1
 
 - The reference saves only **projects**: save-as on a single opened tree
   file does not rewrite that tree; it writes a new `.btproj` with one
@@ -251,9 +288,11 @@ Transition record, 9 bytes:
 
 - Writes the layout above exactly; the XML is written verbatim as given.
 - Offsets are truncated to 48 bits. Status values outside 0–4 are refused.
-- **Atomic output:** the file appears complete or not at all. That matches
-  the reference recorder, which buffers the whole recording and writes it
-  when recording stops (dossier G-2).
+- **Atomic output:** the file appears complete or not at all. This
+  deliberately differs from the reference recorder, which creates the file
+  at 0 bytes when recording starts, buffers everything, and writes it when
+  recording stops (dossier G-2). The byte content when complete is the
+  same; coppice simply never leaves an empty or partial file behind.
 
 ## 5. Live-monitor client (F13–F16, L1)
 
@@ -301,6 +340,10 @@ Requests and replies are ZMQ multipart messages.
 | `t` | GET_TRANSITIONS | header | packed 9-byte records (as §4); the buffer is cleared by the read |
 | `N` | BREAKPOINT_REACHED | — | published on SUB: the node uid as a decimal string |
 
+"none" means the reply is the 22-byte header alone. That is a reading of
+BT 4.9.0 `src/loggers/groot2_publisher.cpp:291-491`; the F13 oracle
+confirms it for every tag v1 sends.
+
 v1 sends `T`, `S`, `B`, `r` and `t`. The hook tags are L1, specified in §5.7.
 
 ### 5.4 Session, polling and status (F13, F14)
@@ -324,18 +367,23 @@ v1 sends `T`, `S`, `B`, `r` and `t`. The hook tags are L1, specified in §5.7.
   status** for a node that has transitioned to IDLE (11 = idle after
   RUNNING, 12 = after SUCCESS, 13 = after FAILURE, 14 = after SKIPPED). A
   conformant stream never emits 10 (dossier G-4).
-  - coppice decodes 0–4 and 11–14. A 10, or any other value, decodes as
-    IDLE with a diagnostic. This follows the open decoder note (surface §2),
-    not the reference client's stricter rejection (dossier G-4); it accepts
-    everything the reference accepts.
+  - The two public sources differ on the edge. Surface §2's decoder note
+    accepts 0–4 and **10–14** and treats anything else as IDLE. The
+    reference client accepts 0–4 and **11–14** and rejects everything else,
+    10 included (dossier G-4).
+  - coppice decodes 0–4 and 11–14 as specified. It decodes 10 (idle after
+    idle) and any other value as IDLE, with a diagnostic, and never
+    disconnects over a status byte. That accepts everything both sources
+    accept.
 
 ### 5.5 Blackboard (F15)
 
 - The request's frame 2 lists subtree names separated by `;` (a name is an
   instance name or a tree ID). The reply is **MessagePack** of a JSON
-  object mapping each name to its blackboard dump. HYPOTHESIS, confirmed by
-  the F15 oracle: unknown names are omitted from the reply rather than
-  raising an error.
+  object mapping each name to its blackboard dump. A name with no matching
+  subtree is skipped: it is absent from the reply, which is not an error
+  (BT 4.9.0 `src/loggers/groot2_publisher.cpp:546-565`, the `find` check
+  at `:555`).
 - Values are arbitrary JSON: nested objects, arrays and numbers. coppice
   keeps them as a generic JSON value.
 - 4.11: a subtree whose blackboard is backed by a distinct root blackboard
@@ -345,21 +393,38 @@ v1 sends `T`, `S`, `B`, `r` and `t`. The hook tags are L1, specified in §5.7.
 
 ### 5.6 Recording a live session (F16)
 
-- `r` with `start` begins server-side capture and returns T0 (epoch µs,
-  decimal string). `t` drains the captured 9-byte records. The server's
-  buffer is capped at 1000 records, so the client must drain faster than
-  the tree fills it.
-- The client writes a `.btlog` (§4.2) from: the FULLTREE XML, T0 from the
-  start reply, and the drained records in order. `r` with `stop` ends the
-  capture.
+All of this subsection is publisher behavior from BT 4.9.0
+`src/loggers/groot2_publisher.cpp`, except the record flow, which is
+reference behavior from dossier G-2.
+
+- **Start** (`r` + `start`, `:438-458`): sets recording on, takes a new time
+  base, **clears the transition buffer**, and replies with the current
+  epoch time in µs as a decimal string. Every later record's offset is
+  measured from that time base (`callback`, `:212-217`). The publisher
+  takes the base and the reply time from two different clocks, so the
+  reply is the best available T0, not an exact one. coppice records that
+  as a stated limit, not an error.
+- **Drain** (`t`, `:466-483`): returns every buffered record, packed 9 bytes
+  each in `.btlog` record layout, and clears the buffer.
+- **Overflow** (`:221-224`): the buffer holds at most **1000** records, and
+  older ones are dropped silently. A drain that returns exactly 1000
+  records therefore *may* have lost records. coppice reports such a drain
+  as a possible gap. It is a heuristic, since the publisher gives no
+  explicit signal. The polling rate must drain faster than the tree fills
+  the buffer.
+- **Stop** (`r` + `stop`): sets recording off.
+- **Writing the file:** coppice writes a `.btlog` (§4.2) from the FULLTREE
+  XML, T0 taken from the start reply, and the drained records in order.
 - **Record flow** (dossier G-2): the destination path is chosen *before*
-  recording starts, and the file is written atomically when recording
-  stops. An interrupted recording leaves no partial file. A missed drain
-  (buffer overflow) is a reported gap, never silent.
-- Draining with `t` clears the shared buffer (surface §2), so a
-  second client reading the same publisher loses records. coppice warns
-  when it detects this (a `start` reply while capture is already active is
-  the HYPOTHESIS signal).
+  recording starts. The file is written when recording stops, atomically
+  in coppice's case (see §4.2 for how that differs from the reference).
+- **Shared-publisher hazard:** the buffer and the time base are
+  per-publisher, not per-client. A second client's `start` clears the
+  buffer and resets the base, which silently invalidates the first
+  client's T0; its drains also take records the first client never sees.
+  The publisher offers nothing a client can use to detect this. coppice
+  documents the hazard in its recording command's help and does not claim
+  to detect it.
 
 ### 5.7 Hooks (L1) — contract only, not in v1
 
@@ -395,11 +460,13 @@ public research record before it enters this spec (see `clean-room.md`).
 |---|----------|--------|-------------|
 | O-1 | Exact bytes of the `BTCPP_version` stamp: inline in `.btproj`, and as a continuation line in tree XML (separator, indentation, position among attributes) | F6 | a self-authored input and the reference's saved output, both files |
 | O-2 | Stamp behavior when `BTCPP_version` is already present, with the same and with a different value | F6 | as O-1 |
-| O-3 | V3 TreeNodesModel rule: which models are embedded on save and which are dropped | F7 | input/output pairs covering built-in, declared-custom and included models |
+| O-3 | V3 TreeNodesModel rule: which models are embedded on a fresh save and which are dropped | L3 (not v1) | input/output pairs covering built-in, declared-custom and included models |
 | O-4 | Include rewriting: `..` paths, separators, absolute inputs, nested directories | F8 | input/output pairs |
 | O-5 | The wrapper project written by save-as of a single tree | F9 | an input/output pair |
-| O-6 | Whether the reference preserves `editable` and `<description>` in models on save | F4/F5 | an input/output pair |
+| O-6 | The exact bytes the reference's save leaves where a `<description>` was dropped, and whether it preserves `editable` | F6 | an input/output pair |
 | O-7 | The reference's reconnect back-off after a publisher restart | F13 | a timing description; non-blocking (coppice's own policy stands) |
+| O-8 | On a project save, which files the reference writes: is an unmodified included tree file left untouched, stamp included? | F6 | a project with an unmodified include, saved, with every file hashed before and after |
+| O-9 | Whether the reference preserves quoting, the XML declaration, character references, CRLF line endings and a missing trailing newline | F6–F9 | input/output pairs, each varying one property |
 
 ## 8. Compatibility oracle
 
@@ -415,7 +482,7 @@ committed.
    exercises F5: comments everywhere, unusual attribute order and quoting,
    CRLF and LF line endings, no trailing newline, entities and character
    references, unknown elements and attributes.
-2. **Reference saves (O-1 to O-6):** self-authored inputs, plus the output
+2. **Reference saves (O-1, O-2, O-4 to O-6, O-8, O-9):** self-authored inputs, plus the output
    the reference produced when saving each one. They are captured on the
    analysis side, published in the research record, then copied here with
    their provenance.
@@ -430,12 +497,15 @@ committed.
 | Feature | Oracle | Tolerance |
 |---------|--------|-----------|
 | F1–F4, F10 | parse of fixture set 1; diagnostics as a reviewed snapshot | exact |
-| F5 | load then save, compared with the input | byte-exact |
-| F6–F9 | save, compared with the reference's output (fixture set 2) | byte-exact |
-| F11 | decode compared with the producing program's own record of what it wrote (uid, status, offset per transition) | exact |
-| F12 | write a decoded log back and compare with the original | byte-exact |
-| F13–F15 | session against both publishers: tree XML equals the publisher's own `WriteTreeToXML` output; status and blackboard equal the publisher-side state | exact, sampled per tick |
-| F16 | live recording compared with a `FileLogger2` run on the same tree and ticks | same uid/status sequence; offsets within one tick |
+| F5 | lossless load then save, compared with the input, over the awkward set; and a negative control: a fixture whose only difference is one byte of inter-attribute whitespace must produce output that differs in exactly that byte, so a normalizing writer fails | byte-exact |
+| F6, F8, F9 | save, compared with the reference's output (fixture set 2) | byte-exact |
+| F7 | the same v3 and v4 documents saved in reference mode under each dialect: V3 output equals the input, V4 output carries the stamp. A writer that ignores the mode fails one of the two | byte-exact |
+| F11 | decode compared with the harness's own record of what it fed `FileLogger2` (uid, status, offset per transition) | exact |
+| F12 | from scratch: given the harness's XML, T0 and transition list, coppice's writer output equals the `FileLogger2` file for the same inputs, with no decoded file involved; plus write-then-read | byte-exact |
+| F13, F15 | session against the BT.CPP harness publisher. The harness ticks only on command and is quiescent while the client samples. Tree XML equals the harness's own `WriteTreeToXML` output; blackboard equals the harness's dump; replies to every v1 tag are checked against §5.3 | exact |
+| F13 (`btview mock`) | connect, FULLTREE, STATUS and BLACKBOARD parse with no error, and the decoded tree matches the mock's served XML | exact on what the mock serves |
+| F14 | the harness drives scripted transitions (RUNNING to SUCCESS to IDLE, FAILURE to IDLE, SKIPPED to IDLE), and coppice decodes 12, 13 and 14 as idle-after-SUCCESS, -FAILURE and -SKIPPED, not as plain IDLE. Unit tests on synthetic buffers cover 10 and out-of-range bytes, which no conformant publisher emits | exact |
+| F16 | live recording from the harness compared with a `FileLogger2` run on the same tree and the same scripted ticks; plus a test that drains exactly 1000 records and expects the possible-gap report | same uid/status sequence; offsets within one tick |
 
 Reference re-baselining against Groot2 v1.10.0 itself happens on the
 analysis side and returns as updated public fixtures. CI never needs the

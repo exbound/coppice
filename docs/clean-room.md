@@ -17,11 +17,13 @@ sources may be read and cited on either side.
   material never enters this repository. It publishes functional facts,
   with no vendor code, no vendor text and no recovery mechanics, to the
   public research record in `exbound/research`.
-- **Implementation side.** Builds coppice only from this repository and the
-  public research record. `docs/engineering-spec.md` is the bridge. Every
-  fact in it cites a section of the public record, and anything the record
-  lacks is an open question addressed to the analysis side (spec §7), not
-  something looked up elsewhere.
+- **Implementation side.** Builds coppice only from this repository, the
+  public research record, and the open-source BehaviorTree.CPP code.
+  `docs/engineering-spec.md` is the bridge. Every fact in it cites one of
+  those, every fact about the reference product's own behavior cites the
+  public research record, and anything the record lacks is an open
+  question addressed to the analysis side (spec §7), not something looked
+  up elsewhere.
 - **Review.** Spec changes are reviewed by the analysis side for leaked
   mechanics or vendor text before they merge.
 
@@ -30,8 +32,8 @@ sources may be read and cited on either side.
 | Date | Side | Who | What |
 |------|------|-----|------|
 | 2026-11-13 to 2026-11-14 | analysis | the operator, with an analysis agent session | observed the reference (work packages G-0 to G-6) and published the results to the research record |
-| 2026-11-15 | implementation | an implementation agent session, directed by the operator | wrote `docs/engineering-spec.md` and `docs/design-decisions.md` from the public research record at commit `bc319c2` |
-| 2026-11-15 | exposure note | the implementation agent session | before drafting the spec, while assessing the plan, read the analysis side's non-public readiness summary of the observations (prose describing observed behavior; no vendor code, binaries or vendor-authored files). The spec was then written from the public record only, and its draft was checked against that record line by line, which removed two details that came from the summary: a characterization of the failing sample files (dropped), and a blackboard edge case (kept as a HYPOTHESIS for a public oracle to settle). Analysis-side review: pending. |
+| 2026-11-15 | implementation | an implementation agent session, directed by the operator | wrote `docs/engineering-spec.md` and `docs/design-decisions.md` from the public research record at commit `bc319c2` and the BehaviorTree.CPP 4.9.0 source |
+| 2026-11-15 | exposure note | the implementation agent session | before drafting the spec, while assessing the plan, read the analysis side's non-public readiness summary of the observations (prose describing observed behavior; no vendor code, binaries or vendor-authored files). The spec was then written from the public record only, and its draft was checked against that record line by line, which removed two details that came from the summary. A characterization of the failing sample files was dropped. A blackboard edge case (unknown names are skipped) was first kept as a HYPOTHESIS; it is open-source library behavior, not reference-product behavior, so it now cites the BehaviorTree.CPP 4.9.0 publisher source. No reference-product fact in the spec rests on the summary. Analysis-side review: pending. |
 
 The operator approved this arrangement, including the exposure note, on
 2026-11-15.

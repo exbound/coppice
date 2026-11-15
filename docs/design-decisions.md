@@ -30,9 +30,10 @@ library's graph type cannot become the data model.
 
 ## D3. Lossless XML: keep the source, splice edits — Decided
 
-No Rust XML library round-trips a document byte for byte: DOM-style readers
-drop attribute order, quoting and inter-tag whitespace. F5 requires exact
-bytes, so:
+No Rust XML library we found writes a document back byte for byte from its
+model. Readers can report source positions (`quick-xml`'s byte offsets,
+`roxmltree`'s attribute ranges), but the writers re-serialize and normalize
+quoting and whitespace. F5 requires exact bytes, so:
 
 - The document keeps its **original bytes**. Parsing (with `quick-xml`'s
   event reader, which reports byte positions) builds the tree model with a
