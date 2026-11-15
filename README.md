@@ -1,15 +1,8 @@
-<!--
-  Implementation-repo README template. Replace the bracketed fields and delete
-  this comment. Keep the section order: a reader should learn, in this order,
-  what the software is, which target and capabilities it covers, how complete it
-  is, how to build and test it, and the compatibility/legal framing.
--->
+# coppice — Groot2-compatible behavior-tree tooling
 
-# [implementation name] — [target] compatibility
-
-[One sentence: what this software does, framed by behavior, not by file format.
-e.g. "An independent, compatible reader and document model for <vendor> project
-files."]
+An independent document model, recorder and live-monitor client for
+BehaviorTree.CPP behavior trees that reads and writes Groot2 projects, tree
+files and recordings the way the reference IDE does.
 
 This is an Exbound implementation repository. Exbound builds independent, open,
 *compatible* reimplementations of proprietary scientific and engineering
@@ -19,24 +12,19 @@ for the C1–C9 capability model and the target dossiers.
 
 ## Target and scope
 
-- **Reference product:** [product + the exact versions observed]
-- **Capabilities covered:** [C2 data, C3 document, C4 computation, … — list only
-  what this repo implements]
-- **Research dossier:** [link to the target's dossier in exbound/research]
+- **Reference product:** Groot2 v1.10.0 (free tier and PRO trial), with BehaviorTree.CPP 4.9.0 as the pinned library
+- **Capabilities covered (v1):** C2 data (`.btlog`), C3 document (projects and tree XML, both dialects), and the live-monitor client
+- **Research dossier:** [Groot2 (target #14)](https://github.com/exbound/research/blob/main/dossiers/groot2.md)
 - **Engineering spec:** [`docs/engineering-spec.md`](docs/engineering-spec.md) —
   the enumerated feature set this software implements and how compatibility is
   measured.
 
 ## Status
 
-[A capability-by-capability status, using the coverage triplet (reference
-observed / implemented / verified). Use `full` / `partial` / `none` only next to
-an enumerated feature set — otherwise say "sketch." Do not report implementation
-as if it were verified.]
-
-| Capability | Reference observed | Implemented | Verified |
-|------------|--------------------|-------------|----------|
-| [C2 …]     | [yes/partial/no]   | […]         | […]      |
+No code yet. The enumerated feature set, and each feature's coverage triplet
+(reference observed / implemented / verified), arrives with
+[`docs/engineering-spec.md`](docs/engineering-spec.md). Until then the status
+is **sketch**.
 
 ## Build and test
 
@@ -69,9 +57,9 @@ This is orientation, not legal advice.
 
 ## License
 
-[Code license — see `LICENSE`. Implementation repositories carry their own code
-licenses; state the choice and, if this repo links a copyleft engine (e.g. a
-GPL reader), say so and why the license follows from it.]
+Apache-2.0 — see [`LICENSE`](LICENSE). Clean-room code with no copyleft
+dependency, so a permissive license with an explicit patent grant is the
+default.
 
 ## Contributing
 
