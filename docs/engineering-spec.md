@@ -104,7 +104,7 @@ behavior, and vendor UI text.
   subtree is its own `<BehaviorTree ID>` block, and repeated instantiations
   consume successive blocks with the same ID.
 - The parser accepts any well-formed XML 1.0 in this shape, including
-  unknown elements and attributes, and keeps them (F5 depends on it). Two
+  unknown elements and attributes, and keeps them (F5 depends on it). Three
   stated limits are refused with a distinct "unsupported" error, never as
   malformed: a declared encoding other than UTF-8; any DTD beyond a
   bare `<!DOCTYPE name>` (an external identifier or an internal subset),

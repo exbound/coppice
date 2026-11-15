@@ -498,7 +498,6 @@ fn built_in_lists_match_the_library_registrations() {
             "RetryUntilSuccessful",
             "RunOnce",
             "Sequence",
-            "SequenceStar",
             "SequenceWithMemory",
             "SkipUnlessUpdated",
             "SubTree",
@@ -513,4 +512,21 @@ fn built_in_lists_match_the_library_registrations() {
             "WhileDoElse",
         ]
     );
+}
+
+#[test]
+fn library_written_models_of_built_ins_are_not_reported() {
+    // The shape BehaviorTree.CPP writes into monitor and log XML: built-in
+    // models declared with their own kinds, and runtime metadata.
+    let t = view(
+        br#"<root BTCPP_format="4"><BehaviorTree ID="T" _fullpath="">
+        <Sequence name="s" _uid="1"><AlwaysSuccess _uid="2"/><Script code="x" _uid="3"/></Sequence>
+      </BehaviorTree>
+      <TreeNodesModel><Control ID="Sequence"/><Action ID="AlwaysSuccess"/>
+        <Action ID="Script"><input_port name="code"/></Action></TreeNodesModel></root>"#,
+    );
+    assert!(kinds(&t).is_empty(), "{:?}", t.diagnostics());
+    // Port names: only an ASCII letter may start one, as in the library.
+    assert!(!coppice_doc::is_port_name("ébc"));
+    assert!(coppice_doc::is_port_name("aé"));
 }

@@ -116,8 +116,10 @@ pub enum DiagnosticKind {
     DuplicateModelsBlock,
     /// A model entry whose `ID` was already declared; the first one is used.
     DuplicateModel,
-    /// A model entry whose `ID` is a built-in node of BehaviorTree.CPP; the
-    /// library uses its built-in, so the declaration has no effect.
+    /// A model entry names a built-in node of BehaviorTree.CPP but declares
+    /// it a leaf when the built-in is not, or the reverse. The library uses
+    /// its built-in. A declaration that agrees (as the library itself writes
+    /// into monitor and log XML) is not reported.
     ModelShadowsBuiltin,
     /// An `<Action|Condition|Control|Decorator>` node without an `ID`, or a
     /// node written with its own tag that carries an `ID` attribute; the
@@ -171,15 +173,17 @@ pub const BUILTIN_LEAVES: &[&str] = &[
     "WasEntryUpdated",
 ];
 
-/// The other node types BehaviorTree.CPP 4.9.0 registers: its Controls and
-/// Decorators, which may have children (BT 4.9.0 `src/bt_factory.cpp:118-173`).
+/// The other node types BehaviorTree.CPP 4.9.0 registers by default: its
+/// Controls and Decorators, which may have children (BT 4.9.0
+/// `src/bt_factory.cpp:118-173`). `SequenceStar` is left out: the library
+/// registers it only when built with its v3 old-names option, which is off
+/// by default (`src/bt_factory.cpp:123-126`, `CMakeLists.txt`).
 pub const BUILTIN_BRANCHES: &[&str] = &[
     "Fallback",
     "AsyncFallback",
     "Sequence",
     "AsyncSequence",
     "SequenceWithMemory",
-    "SequenceStar",
     "Parallel",
     "ParallelAll",
     "ReactiveSequence",
@@ -473,13 +477,15 @@ impl TreeDocument {
                     ),
                 });
             }
-            if is_builtin(&m.id) {
+            if is_builtin(&m.id) && m.kind.is_leaf() != BUILTIN_LEAVES.contains(&m.id.as_str()) {
                 out.push(Diagnostic {
                     kind: DiagnosticKind::ModelShadowsBuiltin,
                     offset: entry.span.start,
                     message: format!(
-                        "model {} names a built-in node; the library uses its built-in",
-                        m.id
+                        "model {} declares the built-in node {} as {}; the library uses its built-in",
+                        m.id,
+                        if BUILTIN_LEAVES.contains(&m.id.as_str()) { "a leaf" } else { "not a leaf" },
+                        if m.kind.is_leaf() { "a leaf" } else { "not a leaf" },
                     ),
                 });
             }
