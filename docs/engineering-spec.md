@@ -14,9 +14,14 @@ Library and architecture choices are in
 - **Sources — the only ones this spec draws on:**
   1. the public research record in
      [exbound/research](https://github.com/exbound/research) at commit
-     `bc319c2`: the Groot2 dossier (`dossiers/groot2.md`), cited as
-     `dossier WP1`…`G-6` by work package, and the compatibility-surface
+     `39c7acc`: the Groot2 dossier (`dossiers/groot2.md`), cited as
+     `dossier WP1`…`G-6` by work package; the compatibility-surface
      study (`docs/groot2-compat-surface.md`), cited as `surface §1`…`§6`;
+     and the save-behavior answers (`dossiers/groot2-o-answers.md`, with
+     the fixture set `fixtures/groot2/o-answers/`), cited as
+     `answers O-n` or `answers, canonical style`. Facts read directly from
+     a published reference-output file are cited by that file, as
+     `fixture <path>`;
   2. the BehaviorTree.CPP **4.9.0** source (MIT, the open-source library,
      not the proprietary product), cited as `BT 4.9.0 <path>:<line>`. It
      settles what the publisher and the file writers do, which is
@@ -48,12 +53,12 @@ list.
 | F2 | Parse tree XML, v3 dialect | C3 | yes (dossier G-5) | none | none | §2.2 |
 | F3 | Parse `.btproj` projects and resolve `<include>` | C3 | yes (surface §3, dossier WP1) | none | none | §2.3 |
 | F4 | Parse `<TreeNodesModel>`, including tolerated extensions | C3 | yes (surface §3) | none | none | §2.4 |
-| F5 | Lossless round-trip: load then save unmodified, byte-identical | C3 | partial (dossier G-1; wider properties are O-9) | yes | partial — byte-exact over the self-authored fixture set plus the one-byte negative control; reference-save properties wait on O-9 | §3.1 |
-| F6 | Reference save, V4: add the `BTCPP_version` stamp | C3 | partial — placement bytes OPEN | none | none | §3.2 |
-| F7 | Reference save, V3: in-place save adds nothing (no stamp) | C3 | partial (dossier G-1; O-9) | none | none | §3.3 |
-| F8 | Save-as: rewrite include paths relative to the new location | C3 | partial — algorithm OPEN | none | none | §3.4 |
-| F9 | Save-as of a single tree: wrap as a one-include project | C3 | partial — wrapper bytes OPEN | none | none | §3.5 |
-| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | none | none | §2.5 |
+| F5 | Lossless save (coppice's default): load then save unmodified, byte-identical | C3 | n/a — the reference has no lossless save (answers O-9); this is coppice's own guarantee | yes | partial — byte-exact over the self-authored fixture set plus the one-byte negative control | §3.1 |
+| F6 | Reference save of a tree file (`--reference`): the canonical writer | C3 | partial — canonical style established (answers); attribute wrapping and escaping beyond the fixtures OPEN | none | none | §3.2 |
+| F7 | Reference save in V3 mode | C3 | partial — dossier G-1 only; whether V3 saves also normalize is OPEN (O-12) | none | none | §3.5 |
+| F8 | Reference project export: flatten includes, copy trees, embed models | C3 | partial (answers O-1, O-2, O-4, O-6; include order, model selection and duplicate basenames are open) | none | none | §3.3 |
+| F9 | Reference save-as of a standalone tree: a bare canonical tree | C3 | yes (answers O-5) | none | none | §3.4 |
+| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | none | none | §2.5, §3.6 |
 | F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | none | none | §4.1 |
 | F12 | Write `.btlog` | C2 | yes (surface §1) | none | none | §4.2 |
 | F13 | Monitor client: connect, FULLTREE, STATUS polling, heartbeat | C6 | yes (surface §2, dossier G-4/G-5) | none | none | §5.1–5.4 |
@@ -67,7 +72,7 @@ list.
 |---|---------|------|---------------|-------|
 | L1 | Hooks: breakpoint and replace-node insert/remove, dump, remove-all, disable-all, unlock | C6 | yes (surface §2, dossier G-3) | §5.7 states the contract now |
 | L2 | Read `.db3` recordings | C2 | yes (surface §4) | schema fixed; no fixture yet |
-| L3 | Editing operations on the document model, including fresh V3 saves and their TreeNodesModel drop | C3 | partial (dossier G-5) | must preserve F5 for untouched regions; the drop rule is O-3 |
+| L3 | Editing operations on the document model, including fresh V3 saves and their TreeNodesModel drop | C3 | partial (dossier G-5) | lossless saves must keep untouched regions byte-identical; the drop rule is O-3 |
 | L4 | Graphical application (canvas, monitor, replay, blackboard) | C8 | partial | after a GUI spike; not specified here |
 | L5 | v3 binary wire translator (legacy publisher to v4 client) | C6 | partial (surface §2 cross-check) | the v3 wire is not needed by the reference client (dossier G-5) |
 
@@ -152,12 +157,10 @@ spellings and never translate one into the other.
   attribute on model elements, and a `<description>` child element
   (surface §3). Both must parse, and both survive coppice's lossless save
   (F5).
-- A public issue on the vendor's tracker, cited in surface §3 and §6,
-  reports that the reference "does not display and does not preserve on
-  save" `<description>`. The report does not say which mode it applies to,
-  nor what bytes remain. Until O-6 is answered, the reference-compatible
-  save **keeps** `<description>` as-is, and the F6–F9 fixtures contain no
-  `<description>`. Whether `editable` is preserved is also O-6.
+- The reference's save **drops** `<description>` and **keeps**
+  `editable="true"` (answers O-6, fixture `out-o6/proj.btproj`), which
+  confirms the vendor-tracker issue cited in surface §3. coppice's
+  lossless save keeps both; its reference save follows the reference.
 
 ### 2.5 Dialect detection and diagnostics (F10)
 
@@ -187,78 +190,163 @@ spellings and never translate one into the other.
 
 ## 3. Documents — saving
 
-The governing requirement: **coppice's save output for a given input is the
-reference's save output for that input, byte for byte.** Two behaviors follow
-from the record.
+coppice has **two save modes**, and they are different operations
+(answers O-9: the reference is a normalizing writer, so "save exactly as
+the reference does" and "keep the file as written" cannot be the same
+thing).
 
-### 3.1 Lossless round-trip (F5) — ESTABLISHED, dossier G-1
+- **Lossless** (F5) — the **default** (operator decision, 2026-11-15). The
+  file's bytes are kept exactly; nothing is reformatted. This is coppice's
+  own guarantee, not reference behavior.
+- **Reference** (F6–F9), opted into with `--reference` — produces the
+  reference's output byte for byte: a canonical serialization of the
+  document model in which no lexical property of the source survives.
 
-**What the record establishes about the reference:** outside the specific
-changes in §3.2–3.4, it round-trips the `<TreeNodesModel>` block, comments,
-attribute order, indentation and XML escaping byte-exact, on the files it
-was tested with. A V3 in-place round-trip is byte-identical to its input
-(dossier G-1).
+### 3.1 Lossless save (F5)
 
-**coppice's own requirement (F5) is wider.** Loading then saving an
-unmodified document in lossless mode reproduces the input bytes exactly,
-including properties the record does not cover: attribute quoting,
-whitespace inside and between tags, the XML declaration, character
-references and entity spelling, line endings (LF or CRLF), and the
-presence or absence of a trailing newline. Whether the *reference*
-preserves those properties is untested (§7, O-9); until it is, F6–F9
-fixtures avoid relying on them.
-- **Test:** byte equality of the output against the input (or against the
-  reference's saved form where §3.2–3.4 apply). A normalized or semantic
-  comparison does not pass.
-- Node layout is **not** a document property: the reference stores no canvas
-  coordinates in either file type (dossier G-1). coppice must not write any.
+- Saving an unmodified document reproduces its input bytes exactly:
+  attribute order and quoting, whitespace inside and between tags,
+  comments, the XML declaration, character references and entity
+  spelling, line endings (LF or CRLF), and the presence or absence of a
+  trailing newline.
+- Lossless save-as writes the same bytes to the new path. It does not
+  rewrite include paths; a moved project's relative includes may then
+  need the user's attention, which coppice reports as a diagnostic.
+- Later edits (L3) change only the regions they touch.
+- **Test:** byte equality of the output against the input. A normalized
+  or semantic comparison does not pass.
+- Node layout is **not** a document property: no file type stores canvas
+  coordinates (dossier G-1), and coppice writes none.
 
-### 3.2 Reference save, V4 (F6) — ESTABLISHED in part, dossier G-1
+### 3.2 Reference save of a tree file (F6) — answers, canonical style
 
-- On save in V4 the reference **adds `BTCPP_version="4.10"`** to `<root>`,
-  unconditionally.
-- **Placement differs by file type:** in a `.btproj` the attribute goes
-  **inline**, on the same line as `<root>`'s existing attributes; in a tree
-  XML file it goes on **its own indented continuation line**.
-- OPEN: the exact bytes of both placements (separator, indentation width
-  and character, position relative to the other attributes), and the
-  behavior when `BTCPP_version` is already present, with the same or a
-  different value (§7, O-1, O-2).
-- `<description>` in node models is kept until O-6 settles what the
-  reference does with it (§2.4).
-- OPEN: which files a project save writes. The record says a bare tree file
-  is rewritten only when its content was modified (dossier G-1), so an
-  unmodified included tree file is probably left untouched, stamp included.
-  That is a HYPOTHESIS until O-8 is answered.
-- coppice also offers a **lossless save** (F5 with no stamp), as an explicit
-  option. The reference-compatible save is the default.
+The reference writes every tree file in one canonical style, on every
+write path (in-place per-file save, save-as, export), whether or not the
+file was modified (answers O-8: an unmodified tree is rewritten). Byte by
+byte, as fixtures `out-o5/in-o5-single.xml` and `out-o6/tree.xml` show:
 
-### 3.3 Reference save, V3 (F7) — ESTABLISHED, dossier G-1
+1. Line 1 is `<?xml version="1.0" encoding="UTF-8"?>`.
+2. The `<root>` tag is split: `<root BTCPP_format="4"` on its own line,
+   then `BTCPP_version="<target>">` on a continuation line indented to the
+   column of the first attribute (6 spaces).
+3. The body is indented **2 spaces per level**. An element with no
+   children is written self-closing (`<X/>`); one with children gets an
+   end tag on its own line.
+4. After the last `</BehaviorTree>`: one empty line, then at body indent
+   the comment `<!-- Description of Node Models (used by Groot) -->`,
+   then the `<TreeNodesModel>` block (or `<TreeNodesModel/>` when empty),
+   then one empty line, then `</root>` and a **single trailing LF**.
+5. Line ends are LF; attribute values are double-quoted; character
+   references are resolved and `&` is written as `&amp;` (fixture
+   `in-o9-awkward/charrefs-rt.xml`); **all source comments are dropped**;
+   only the comment in rule 4 is written (answers O-9).
+6. Attribute order within a tag is kept (answers O-1).
+7. **Attribute wrapping:** in tree files, every two-attribute tag the
+   fixtures show (`<root>` and model tags) has its second attribute on a
+   continuation line aligned to the first attribute's column (fixture
+   `out-o6/tree.xml`: 6, 12 and 15 spaces). No tree-file tag in the
+   fixtures has three or more attributes (project-file roots with three
+   stay on one line, as project files never wrap).
+   That the rule is "two or more attributes" rather than a length
+   threshold is a **HYPOTHESIS**: the answers doc proposes a length band,
+   but its one-line counter-example is in a project file, where nothing
+   wraps, and no tree-body node in the fixtures has two attributes
+   (§7, O-10).
+8. **Which models the `<TreeNodesModel>` block holds:** every written
+   tree in the fixtures holds exactly the declared models that the tree
+   **uses** (a model is used when a node's element name equals the
+   model's `ID`; the explicit `<Action ID="…"/>` form and subtree
+   references are not covered by the fixtures), and nothing else. `out-o6/tree.xml` uses three declared
+   models and embeds all three; `out-o2-same/tree.xml`,
+   `out-o2-diff/tree.xml` and `in-o1-proj-corrected/tree.xml` use none of
+   their project's declared model and embed nothing; `comments-rt.xml`
+   drops a model its tree never uses. This rule is a **HYPOTHESIS**: it
+   fits every written file, and no fixture has a tree using some declared
+   models but not others (§7, O-14). The answers doc's statement that a
+   project export embeds the project's models into every copied tree file
+   is contradicted by the `out-o2-*` exports.
 
-- In V3 mode the reference-compatible save adds **nothing** to `<root>`
-  (no `BTCPP_version` stamp), and an in-place round-trip is byte-identical.
-  What distinguishes F7 from F5 is the mode: the same document saved in V4
-  mode gets the stamp (F6), and in V3 mode it must not.
-- Fresh V3 saves of documents created in the editor are L3, not v1. The
-  record (dossier G-5) says they declare `BTCPP_format="3"`, preserve
-  `SubTree` spelling, embed no built-in node models, and embed "only models
-  loaded from included files". The exact drop rule is OPEN (§7, O-3).
+The comment in rule 4 is a format element the reference writes into
+every file, and it already appears in public ecosystem project files
+(surface §3); coppice emits it for byte compatibility in reference mode
+only, and never otherwise.
 
-### 3.4 Save-as and include rewriting (F8) — ESTABLISHED in part, dossier G-1
+**Version stamp** (answers O-1, O-2). Measured: a file with no stamp gets
+`BTCPP_version="<target>"` (4.10 for Groot2 v1.10.0), immediately after
+`BTCPP_format`; a project already stamped with the target keeps it; a
+project stamped with an **older** minor version (4.9) is written with the
+target, after the user chose to upgrade in a prompt the reference shows
+on opening such a file. coppice takes the target as a setting with that
+default, and when it rewrites an existing stamp it reports a diagnostic
+in place of the prompt. Not measured, so HYPOTHESIS until O-16: a newer
+stamp than the target, an existing stamp in a tree file, and a stamp not
+immediately after `BTCPP_format`.
 
-- On save-as, each `<include path>` is rewritten **relative to the saved
-  file's own location**: a bare filename when the included file sits in the
-  same directory, a relative path otherwise.
-- OPEN: `..` segments versus other forms, the path separator, and whether
-  an absolute input path stays absolute (§7, O-4).
+Not established, so not yet byte-exact (§7): escaping of `<`, `>`, `"` and
+`'` in attribute values and of characters in text, text content inside
+nodes, and the spacing between two or more `<BehaviorTree>` elements
+(O-13); tags with three or more attributes, and wrapping of body nodes
+(O-10); model selection (O-14).
 
-### 3.5 Single-tree save-as (F9) — ESTABLISHED in part, dossier G-1
+### 3.3 Reference project export (F8) — answers O-1, O-2, O-4, O-6
 
-- The reference saves only **projects**: save-as on a single opened tree
-  file does not rewrite that tree; it writes a new `.btproj` with one
-  `<include>` pointing to the tree.
-- A bare tree file is rewritten only when its content was modified.
-- OPEN: the bytes of the wrapper project the reference creates (§7, O-5).
+The reference never writes a project file in place; its only project
+write is an **export to a directory** (answers O-8). coppice's
+`save --reference` of a project is that export, and it takes the
+destination directory as a required argument. The destination must be a
+new or empty directory, and coppice never overwrites an existing file:
+the reference's export overwrites whatever shares a written file's name,
+including the project file and, because includes are flattened to
+basenames, any source tree that happens to sit in the destination
+(answers O-4). An export whose includes cannot all be resolved is refused
+before anything is written.
+
+- **Project file** (fixtures `out-o2-same/proj.btproj`,
+  `out-o4/proj.btproj`, `out-o6/proj.btproj`): line 1 is the declaration;
+  `<root>` stays on **one line** with attributes in order `BTCPP_format`,
+  `BTCPP_version`, then the rest in source order (e.g. `project_name`);
+  the body is indented **4 spaces per level**; the `<include>` elements
+  come first, then the comment of §3.2 rule 4, then the
+  `<TreeNodesModel>` block; then `</root>` and a single trailing LF.
+  **No empty lines**, and **no attribute wrapping** in the project file.
+- **Includes are flattened** (answers O-4): every `<include path>` is
+  written as the included file's **basename**, whatever the input form
+  (subdirectory, `..`, nested, absolute), and every included tree is
+  **copied beside the exported project** in the canonical tree style
+  (§3.2). The fixture shows the includes **sorted by basename**
+  (`out-o4/proj.btproj`); one sample only, so a HYPOTHESIS. Two includes
+  with the same basename are not covered (O-11).
+- **Models** (answers O-6): entries sorted alphabetically by `ID`;
+  `editable` kept; `<description>` dropped; ports kept. The project file
+  holds every declared model; each copied tree holds the models it uses
+  (§3.2 rule 8, a HYPOTHESIS).
+
+### 3.4 Reference save-as of a standalone tree (F9) — answers O-5
+
+Saving a tree file opened on its own (not through a project) to a new
+path writes a **bare tree file** under the chosen name, in the canonical
+tree style: no project wrapper, no `<include>`, no `project_name`, the
+`BehaviorTree ID` unchanged, and the model block of §3.2 rule 8, empty in
+the fixture because the tree declares no models (fixture
+`out-o5/in-o5-single.xml`). This corrects dossier G-1's one-include
+wrapper, which was the project export route.
+
+### 3.5 Reference save in V3 mode (F7)
+
+Dossier G-1 records a byte-identical V3 in-place round-trip on its
+corpus, but that corpus may already have been in canonical form, and the
+answers set contains no V3 input. Whether V3-mode saves also normalize,
+and to which style, is OPEN (O-12); F7 waits on it. Fresh V3 saves
+(dossier G-5) are L3.
+
+### 3.6 A loader rule seen in the reference (F10)
+
+The reference refuses to load a tree in which an Action node has a child
+element (answers, additional behaviors). That is BehaviorTree.CPP's own
+loader rule, which applies to Actions and Conditions (BT 4.9.0
+`src/xml_parsing.cpp:671-677`). coppice parses such a file (parsing never instantiates,
+§2.5) and reports a diagnostic naming the node; a reference-mode save of
+it is refused.
 
 ## 4. Recordings — `.btlog` (F11, F12)
 
@@ -476,15 +564,16 @@ public research record before it enters this spec (see `clean-room.md`).
 
 | # | Question | Blocks | Needed form |
 |---|----------|--------|-------------|
-| O-1 | Exact bytes of the `BTCPP_version` stamp: inline in `.btproj`, and as a continuation line in tree XML (separator, indentation, position among attributes) | F6 | a self-authored input and the reference's saved output, both files |
-| O-2 | Stamp behavior when `BTCPP_version` is already present, with the same and with a different value | F6 | as O-1 |
+| O-1, O-2, O-4, O-5, O-6, O-8, O-9 | answered (answers doc and fixtures, research `39c7acc`), with the remainders split out below | — | — |
 | O-3 | V3 TreeNodesModel rule: which models are embedded on a fresh save and which are dropped | L3 (not v1) | input/output pairs covering built-in, declared-custom and included models |
-| O-4 | Include rewriting: `..` paths, separators, absolute inputs, nested directories | F8 | input/output pairs |
-| O-5 | The wrapper project written by save-as of a single tree | F9 | an input/output pair |
-| O-6 | What the reference's save does with `<description>` in node models (kept or dropped, in which mode, and the bytes left behind), and whether it preserves `editable` | F6 | an input/output pair |
 | O-7 | The reference's reconnect back-off after a publisher restart | F13 | a timing description; non-blocking (coppice's own policy stands) |
-| O-8 | On a project save, which files the reference writes: is an unmodified included tree file left untouched, stamp included? | F6 | a project with an unmodified include, saved, with every file hashed before and after |
-| O-9 | Whether the reference preserves quoting, the XML declaration, character references, CRLF line endings and a missing trailing newline | F6–F9 | input/output pairs, each varying one property |
+| O-10 | Attribute wrapping in tree files: is it every tag with two or more attributes, or a length threshold? Does it apply to body nodes? How are three or more attributes laid out? | F6 | tree-file saves with body nodes of 2 and 3 short attributes, and of 1 very long attribute |
+| O-11 | Project export when two includes share a basename (`a/tree.xml`, `b/tree.xml`) | F8 | an input/output pair |
+| O-12 | Does a V3-mode save normalize, and to what style? | F7 | V3 inputs with the O-9 awkward properties, saved in V3 mode |
+| O-13 | Escaping, content and layout in the canonical writer: `<`, `>`, `"`, `'` and non-ASCII in attribute values; text content inside a node; spacing between two or more `<BehaviorTree>` elements | F6 | one input per property, saved |
+| O-14 | Model selection: when a tree uses some of its declared models but not others, which go into the written tree's `<TreeNodesModel>`, on per-file save, on export, and on a standalone save-as? | F6, F8, F9 | a project with two declared models whose tree uses one, saved per file and exported; and a standalone tree that declares two models and uses one, saved-as |
+| O-15 | The O-4 input `../outside.xml` was not published (only its hash is in the answers doc), so the O-4 export cannot be replayed in full | F8 | the input file itself |
+| O-16 | Version stamp cases not measured: a newer stamp than the target; an existing stamp in a tree file; a stamp not immediately after `BTCPP_format` | F6, F8 | one input per case, saved |
 
 ## 8. Compatibility oracle
 
@@ -500,10 +589,22 @@ committed.
    exercises F5: comments everywhere, unusual attribute order and quoting,
    CRLF and LF line endings, no trailing newline, entities and character
    references, unknown elements and attributes.
-2. **Reference saves (O-1, O-2, O-4 to O-6, O-8, O-9):** self-authored inputs, plus the output
-   the reference produced when saving each one. They are captured on the
-   analysis side, published in the research record, then copied here with
-   their provenance.
+2. **Reference saves:** the answers fixture set (self-authored inputs and
+   the reference's own written outputs), copied from the research record
+   at `39c7acc` into `tests/fixtures/reference/o-answers/`, provenance in
+   `tests/fixtures/README.md`. New answers (O-10 to O-16) arrive the same
+   way. Which input produced which output:
+
+   | Feature | Input (`tests/fixtures/reference/o-answers/…`) | Route | Reference output |
+   |---|---|---|---|
+   | F6 | `in-o2-same-corrected/tree.xml` (identical bytes to the tree the O-8 save started from; that save ran inside the `in-o1-proj-corrected` project) | per-file save, unmodified | `in-o1-proj-corrected/tree.xml` (the reference's rewrite) |
+   | F8 | `in-o2-same-corrected/` | project export | `out-o2-same/` |
+   | F8 | `in-o2-diff-corrected/` (older stamp, upgrade chosen) | project export | `out-o2-diff/` |
+   | F8 | `in-o6-model/` | project export | `out-o6/` |
+   | F6 | `in-o4-paths/sub/tree.xml`, `in-o4-paths/deep/nest/tree2.xml` (as single trees; O-15: the full O-4 export is not replayable) | canonical tree write | `out-o4/tree.xml`, `out-o4/tree2.xml` |
+   | F9 | `in-o5-single.xml` | standalone save-as | `out-o5/in-o5-single.xml` |
+   | F9 | each `in-o9-awkward/<name>.xml` | standalone save-as | `in-o9-awkward/<name>-rt.xml` |
+   | F10 | `in-o1-proj/`, `in-o2-same/`, `in-o2-diff/` (an Action with a child) | load | refused: a diagnostic, and no reference-mode save (§3.6) |
 3. **Logs:** `.btlog` files generated in CI by BehaviorTree.CPP 4.9.0's own
    `FileLogger2`, running self-authored trees.
 4. **Monitor:** a live BehaviorTree.CPP 4.9.0 `Groot2Publisher`, built in CI
@@ -514,10 +615,12 @@ committed.
 
 | Feature | Oracle | Tolerance |
 |---------|--------|-----------|
-| F1–F4, F10 | parse of fixture set 1; diagnostics as a reviewed snapshot | exact |
-| F5 | lossless load then save, compared with the input, over the awkward set; and a negative control: a fixture pair differing only by one substituted whitespace byte between attributes (space versus tab) must produce outputs that differ in exactly that byte, so a normalizing writer fails | byte-exact |
-| F6, F8, F9 | save, compared with the reference's output (fixture set 2) | byte-exact |
-| F7 | a v3 `.btproj` saved in place in reference mode under V3 must equal its input byte for byte. The same file saved under V4 must differ, carrying a `BTCPP_version` attribute on `<root>`; only the attribute's presence is checked until O-1 pins its bytes. A writer that ignores the mode fails one half. No cross-dialect claim beyond that | V3 half byte-exact; V4 half presence only |
+| F1–F4, F10 | parse of fixture set 1, and the F10 rows of the set-2 table (each refused with a diagnostic naming the leaf node that has a child); diagnostics as a reviewed snapshot | exact |
+| F5 | lossless save, compared with the input, over the awkward set; and a negative control: a fixture pair differing only by one substituted whitespace byte between attributes (space versus tab) must produce outputs that differ in exactly that byte, so a normalizing writer fails | byte-exact |
+| F6 | the F6 row of the table above: reference-mode per-file save, compared with the reference's output | byte-exact |
+| F8 | the F8 rows of the table above: reference-mode export to a fresh directory; every file the reference wrote is compared, and no other file may be written | byte-exact |
+| F9 | the F9 rows of the table above: reference-mode save-as, compared with the reference's output | byte-exact |
+| F7 | waits on O-12 | — |
 | F11 | `FileLogger2` takes T0 privately at construction (BT 4.9.0 `src/loggers/bt_file_logger_v2.cpp:78,107`), so the harness records each transition's uid, status and **absolute** timestamp through a second, absolute-mode status logger on the same tree. Both loggers are notified with the same time point. The harness then reads T0 from the file. coppice's decode must give the same uid and status, and offsets equal to the harness's absolute time minus T0 | exact |
 | F12 | from scratch: coppice writes from the harness's XML, the T0 read from the `FileLogger2` file, and the harness's transition list (offsets computed as for F11), with no decoded record involved; the output must equal the `FileLogger2` file. Plus write-then-read | byte-exact |
 | F13, F15 | session against the BT.CPP harness publisher. The harness ticks only on command and is quiescent while the client samples. Tree XML equals the harness's own `WriteTreeToXML` output; blackboard equals the harness's dump; replies to every v1 tag are checked against §5.3 | exact |
