@@ -387,6 +387,9 @@ fn each_wellformedness_rule_reports_its_exact_offset() {
         (b"<!DOCTYPE a><!DOCTYPE b><a/>", Malformed, 12), // second DOCTYPE
         (b"<!DOCTYPE><a/>", Malformed, 9),      // DOCTYPE without a name
         (b"<!DOCTYPE a!><a/>", Malformed, 11),  // junk after the DOCTYPE name
+        (b"<!DOCTYPE a SYSTEMX><a/>", Malformed, 12), // not an external identifier
+        (b"<!DOCTYPE a SYSTEM><a/>", Malformed, 12), // keyword without a literal
+        (b"<!DOCTYPE a\tPUBLIC", Malformed, 12), // truncated after the keyword
         (
             b"<?xml version=\"1.0\" standalone=\"maybe\"?><a/>",
             Malformed,

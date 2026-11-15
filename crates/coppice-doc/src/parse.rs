@@ -304,7 +304,10 @@ impl<'a> Parser<'a> {
         let rest = &self.src[at..];
         if rest.starts_with('>') {
             Ok(at + 1)
-        } else if at > name_end && (rest.starts_with("SYSTEM") || rest.starts_with("PUBLIC")) {
+        } else if at > name_end
+            && (rest.starts_with("SYSTEM") || rest.starts_with("PUBLIC"))
+            && rest[6..].starts_with(|c: char| is_xml_space(c) || c == '"' || c == '\'')
+        {
             Err(unsupported(at, "external DTDs are not read"))
         } else if rest.starts_with('[') {
             Err(unsupported(at, "DTD internal subsets are not read"))
