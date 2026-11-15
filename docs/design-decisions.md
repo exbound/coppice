@@ -13,7 +13,11 @@ with explicit integer types and no runtime. The core must be usable without
 a window system: from the command line, from tests, and later from a GUI
 crate.
 
-## D2. Workspace layout — Decided for the crates that exist; the rest arrive with their features
+## D2. Workspace layout — Decided
+
+The layout below is decided. `coppice-doc` and `coppice-cli` exist; the
+other two crates arrive with their first feature, so the workspace never
+carries an empty crate with nothing to test.
 
 ```
 crates/coppice-doc      documents: parse, model, save (F1–F10)

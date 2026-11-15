@@ -27,7 +27,9 @@ fn unknown_arguments_are_a_usage_error() {
 
 #[test]
 fn short_version_flag_matches_long() {
-    assert_eq!(coppice(&["-V"]).stdout, coppice(&["--version"]).stdout);
+    let short = coppice(&["-V"]);
+    assert!(short.status.success());
+    assert_eq!(short.stdout, coppice(&["--version"]).stdout);
 }
 
 #[test]
@@ -36,5 +38,9 @@ fn no_arguments_and_extra_arguments_are_usage_errors() {
         let out = coppice(args);
         assert_eq!(out.status.code(), Some(2), "args: {args:?}");
         assert!(out.stdout.is_empty(), "args: {args:?}");
+        assert!(
+            String::from_utf8(out.stderr).unwrap().starts_with("usage:"),
+            "args: {args:?}"
+        );
     }
 }

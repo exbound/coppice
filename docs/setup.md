@@ -12,8 +12,10 @@ Toolchain prerequisites and the local development loop for coppice.
   rustup selects it automatically inside this repository.
 - A **C linker**, which Rust needs to link the binary and the tests:
   `build-essential` on Debian/Ubuntu, the Xcode command-line tools on macOS,
-  the MSVC build tools on Windows. Without one, `just check` still passes
-  (it does not link) but `just test` fails with `linker 'cc' not found`.
+  the MSVC build tools on Windows. Without one, `just test` fails with a
+  "linker not found" error. (`just check` currently passes without one,
+  because nothing it builds is linked; that stops being true once a
+  dependency with a build script arrives.)
 - [`just`](https://github.com/casey/just) for the task recipes.
 
 No other system libraries are needed yet. The live-monitor crate will add
@@ -42,8 +44,10 @@ Run `just check && just test` before every commit; CI runs the same.
 `cargo clippy` and `cargo test` run with `--locked`, so a change to
 dependencies must include the updated `Cargo.lock`.
 
-Every crate under `crates/` must take the workspace lints (`[lints]` with
-`workspace = true` in its `Cargo.toml`). `just check` fails on a crate that
+Every crate under `crates/` must take the workspace lints, spelled exactly
+as a `[lints]` table header followed by a `workspace = true` line in its
+`Cargo.toml` (other TOML spellings that cargo accepts are rejected by the
+check). `just check` fails on a crate that
 does not, because otherwise it would silently skip the workspace-wide
 `unsafe_code = "forbid"`.
 
