@@ -101,10 +101,10 @@ behavior, and vendor UI text.
 - The parser accepts any well-formed XML 1.0 in this shape, including
   unknown elements and attributes, and keeps them (F5 depends on it). Two
   stated limits are refused with a distinct "unsupported" error, never as
-  malformed: a declared encoding other than UTF-8, and a DTD internal
-  subset that declares entities or uses parameter-entity references.
-  Behavior-tree files use neither; supporting them is not planned until a
-  fixture needs it.
+  malformed: a declared encoding other than UTF-8, and any DTD beyond a
+  bare `<!DOCTYPE name>` (an external identifier or an internal subset),
+  because coppice does not read DTDs. Behavior-tree files use neither;
+  supporting them is not planned until a fixture needs it.
 
 ### 2.2 Tree XML, v3 dialect (F2) — ESTABLISHED, dossier G-5
 

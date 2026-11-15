@@ -76,10 +76,13 @@ pub struct Attribute {
     /// The name as written.
     pub name: String,
     /// The value with entity and character references decoded
-    /// (`&amp;` becomes `&`, `&#x41;` becomes `A`). Literal tabs and line
-    /// breaks are kept as written, not normalized to spaces as XML 1.0
-    /// §3.3.3 describes: BehaviorTree.CPP reads values unnormalized, and
-    /// coppice reports what that library would see.
+    /// (`&amp;` becomes `&`, `&#x41;` becomes `A`) and literal line ends
+    /// normalized to LF (CR-LF and a lone CR become LF, XML 1.0 §2.11).
+    /// Tabs and line feeds are not replaced by spaces as XML 1.0 §3.3.3
+    /// describes, because the XML library BehaviorTree.CPP 4.9.0 bundles
+    /// (tinyxml2 11.0, `3rdparty/tinyxml2/tinyxml2.cpp:294-316`) does not
+    /// either. That library also collapses an LF-CR pair to one LF, which
+    /// XML does not; coppice follows XML there.
     pub value: String,
     /// Where the name is, within the start tag.
     pub name_span: Span,
@@ -93,10 +96,10 @@ pub struct Attribute {
 impl Document {
     /// Parse a document. The input must be well-formed XML 1.0 encoded as
     /// UTF-8 (a UTF-8 byte-order mark is allowed and kept). Exactly one
-    /// top-level element is required. A declared encoding other than UTF-8,
-    /// and a DTD internal subset that declares entities or uses
-    /// parameter-entity references, are refused as
-    /// [`ParseError::Unsupported`].
+    /// top-level element is required. DTDs are not read: a DOCTYPE with an
+    /// external identifier or an internal subset is refused as
+    /// [`ParseError::Unsupported`] (a bare `<!DOCTYPE name>` is accepted),
+    /// as is a declared encoding other than UTF-8.
     pub fn parse(source: &[u8]) -> Result<Document, ParseError> {
         parse::parse(source)
     }

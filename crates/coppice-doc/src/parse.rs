@@ -7,8 +7,9 @@
 //! recorded as byte ranges into the untouched source.
 //!
 //! Stated limits (reported as [`ParseError::Unsupported`], never as
-//! malformed): a DTD internal subset that declares entities or contains
-//! parameter-entity references, and any declared encoding other than UTF-8.
+//! malformed): coppice does not read DTDs, so a DOCTYPE with an external
+//! identifier or an internal subset is refused (a bare `<!DOCTYPE name>` is
+//! accepted), and any declared encoding other than UTF-8 is refused.
 //! Behavior-tree files use neither.
 
 use std::fmt;
@@ -142,10 +143,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Document, ParseError> {
             offset: e.valid_up_to(),
         })?
         .to_owned();
-    if let Some((i, c)) = source
-        .char_indices()
-        .find(|&(i, c)| !(is_xml_char(c) || (i == 0 && c == '\u{feff}')))
-    {
+    if let Some((i, c)) = source.char_indices().find(|&(_, c)| !is_xml_char(c)) {
         return Err(malformed(
             i,
             format!("character U+{:04X} is not allowed in XML", c as u32),
@@ -278,7 +276,7 @@ impl<'a> Parser<'a> {
             if let Some(i) = raw.find("]]>") {
                 return Err(malformed(start + i, "']]>' is not allowed in text"));
             }
-            decode(raw, start)?;
+            decode(raw, start, false)?;
         }
         self.emit(Node::Text(start..end));
         Ok(())
@@ -302,36 +300,15 @@ impl<'a> Parser<'a> {
             return Err(malformed(at, "expected whitespace after <!DOCTYPE"));
         }
         let (_, name_end) = self.name_at(after_ws)?;
-        at = name_end;
-        // Optional external ID: SYSTEM "…" | PUBLIC "…" "…".
-        let ws = self.skip_whitespace(at);
-        let keyword_quotes = if self.src[ws..].starts_with("SYSTEM") && ws > at {
-            at = ws + "SYSTEM".len();
-            1
-        } else if self.src[ws..].starts_with("PUBLIC") && ws > at {
-            at = ws + "PUBLIC".len();
-            2
-        } else {
-            0
-        };
-        for _ in 0..keyword_quotes {
-            let q = self.skip_whitespace(at);
-            if q == at {
-                return Err(malformed(
-                    at,
-                    "expected whitespace before a quoted identifier",
-                ));
-            }
-            at = self.quoted_end(q)?;
-        }
-        at = self.skip_whitespace(at);
-        if self.src[at..].starts_with('[') {
-            at = self.internal_subset(at + 1)?;
-            at = self.skip_whitespace(at);
-        }
-        if self.src[at..].starts_with('>') {
+        at = self.skip_whitespace(name_end);
+        let rest = &self.src[at..];
+        if rest.starts_with('>') {
             Ok(at + 1)
-        } else if at >= self.src.len() {
+        } else if at > name_end && (rest.starts_with("SYSTEM") || rest.starts_with("PUBLIC")) {
+            Err(unsupported(at, "external DTDs are not read"))
+        } else if rest.starts_with('[') {
+            Err(unsupported(at, "DTD internal subsets are not read"))
+        } else if rest.is_empty() {
             Err(malformed(start, "unterminated DOCTYPE"))
         } else {
             Err(malformed(at, "unexpected content in DOCTYPE"))
@@ -348,45 +325,6 @@ impl<'a> Parser<'a> {
             .find(quote)
             .map(|i| q + 1 + i + 1)
             .ok_or_else(|| malformed(q, "unterminated quoted literal"))
-    }
-
-    /// The body of an internal subset starting at `at` (just past `[`);
-    /// returns the offset just past its `]`.
-    fn internal_subset(&self, mut at: usize) -> Result<usize, ParseError> {
-        loop {
-            at = self.skip_whitespace(at);
-            let rest = &self.src[at..];
-            if rest.starts_with(']') {
-                return Ok(at + 1);
-            } else if rest.starts_with("<!--") {
-                at = self.comment_end(at)?;
-            } else if rest.starts_with("<?") {
-                at = self.find_from(at, at + 2, "?>", "processing instruction")? + 2;
-            } else if rest.starts_with("<!ENTITY") {
-                return Err(unsupported(
-                    at,
-                    "entity declarations in a DTD internal subset",
-                ));
-            } else if rest.starts_with("<!") {
-                // ELEMENT, ATTLIST, NOTATION: scan to '>' outside quotes.
-                let mut i = at + 2;
-                loop {
-                    match self.src[i..].chars().next() {
-                        None => return Err(malformed(at, "unterminated markup declaration")),
-                        Some('>') => break,
-                        Some('"' | '\'') => i = self.quoted_end(i)?,
-                        Some(c) => i += c.len_utf8(),
-                    }
-                }
-                at = i + 1;
-            } else if rest.starts_with('%') {
-                return Err(unsupported(at, "parameter-entity references in a DTD"));
-            } else if rest.is_empty() {
-                return Err(malformed(at, "unterminated DTD internal subset"));
-            } else {
-                return Err(malformed(at, "unexpected content in DTD internal subset"));
-            }
-        }
     }
 
     fn processing_instruction(&mut self, start: usize) -> Result<(), ParseError> {
@@ -456,6 +394,9 @@ impl<'a> Parser<'a> {
                     }
                 }
                 "encoding" => {
+                    if value.is_empty() {
+                        return Err(malformed(q + 1, "empty encoding name"));
+                    }
                     if !value.eq_ignore_ascii_case("UTF-8") {
                         return Err(unsupported(
                             q + 1,
@@ -584,7 +525,7 @@ impl<'a> Parser<'a> {
         }
         Ok(Attribute {
             name: name.to_owned(),
-            value: decode(raw, value_start)?,
+            value: decode(raw, value_start, true)?,
             name_span: at..name_end,
             value_span: value_start..value_end,
             quote,
@@ -620,12 +561,21 @@ impl<'a> Parser<'a> {
 
 /// Decode entity and character references in `raw`, which starts at byte
 /// `base` of the source. Undefined or malformed references are errors.
-fn decode(raw: &str, base: usize) -> Result<String, ParseError> {
+/// With `line_ends`, literal CR-LF and lone CR become LF (XML 1.0 §2.11);
+/// a CR written as `&#13;` is kept.
+fn decode(raw: &str, base: usize, line_ends: bool) -> Result<String, ParseError> {
+    let literal = |out: &mut String, text: &str| {
+        if line_ends {
+            out.push_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
+        } else {
+            out.push_str(text);
+        }
+    };
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     let mut offset = base;
     while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
+        literal(&mut out, &rest[..amp]);
         let at = offset + amp;
         let after = &rest[amp + 1..];
         let semi = after
@@ -647,7 +597,7 @@ fn decode(raw: &str, base: usize) -> Result<String, ParseError> {
         rest = &rest[consumed..];
         offset += consumed;
     }
-    out.push_str(rest);
+    literal(&mut out, rest);
     Ok(out)
 }
 

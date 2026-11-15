@@ -386,8 +386,20 @@ fn each_wellformedness_rule_reports_its_exact_offset() {
         (b"<a/><!DOCTYPE a>", Malformed, 4),    // DOCTYPE after the element
         (b"<!DOCTYPE a><!DOCTYPE b><a/>", Malformed, 12), // second DOCTYPE
         (b"<!DOCTYPE><a/>", Malformed, 9),      // DOCTYPE without a name
-        (b"<!DOCTYPE a [ ] junk ><a/>", Malformed, 16), // junk after the subset
-        (b"<?xml?><a/>", Malformed, 5),         // declaration without version
+        (b"<!DOCTYPE a!><a/>", Malformed, 11),  // junk after the DOCTYPE name
+        (
+            b"<?xml version=\"1.0\" standalone=\"maybe\"?><a/>",
+            Malformed,
+            32,
+        ),
+        (
+            b"<?xml version=\"1.0\" standalone=\"yes\" encoding=\"UTF-8\"?><a/>",
+            Malformed,
+            37,
+        ),
+        (b"<?xml version=\"1.0\" encoding=\"\"?><a/>", Malformed, 30), // empty encoding
+        (b"<?a;b?><a/>", Malformed, 3), // PI target followed by a non-space
+        (b"<?xml?><a/>", Malformed, 5), // declaration without version
         (b"<?xml version=\"9.9\"?><a/>", Malformed, 15), // invalid version
         (
             b"<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>",
@@ -397,8 +409,10 @@ fn each_wellformedness_rule_reports_its_exact_offset() {
         (
             b"<!DOCTYPE a [<!ENTITY e \"x\">]><a>&e;</a>",
             Unsupported,
-            13,
+            12,
         ),
+        (b"<!DOCTYPE a SYSTEM \"x.dtd\"><a>&e;</a>", Unsupported, 12),
+        (b"<!DOCTYPE a[<!ELEMENT a ANY>]><a/>", Unsupported, 11),
     ];
     for (input, kind, want) in cases {
         let shown = String::from_utf8_lossy(input);
@@ -416,11 +430,8 @@ fn each_wellformedness_rule_reports_its_exact_offset() {
 #[test]
 fn wellformed_edge_cases_are_accepted_and_round_trip() {
     let cases: &[&str] = &[
-        "<!DOCTYPE a [<!ELEMENT a (#PCDATA)>]><a/>",
-        "<!DOCTYPE a SYSTEM \"x[y.dtd\"><a/>",
-        "<!DOCTYPE a [<!-- ] -->]><a/>",
-        "<!DOCTYPE a [<!ATTLIST a b CDATA \"]>\">]><a/>",
-        "<!DOCTYPE a PUBLIC \"p\" 's'><a/>",
+        "<!DOCTYPE a><a/>",
+        "<!DOCTYPE a \r\n><a/>",
         "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?><a/>",
         "<?xml-stylesheet href=\"x\"?><a/>",
         "<:a/>",
@@ -442,4 +453,14 @@ fn wellformed_edge_cases_are_accepted_and_round_trip() {
             check_node(input, &doc, n);
         }
     }
+}
+
+#[test]
+fn attribute_line_ends_are_normalized_but_the_source_is_not() {
+    let src = "<a b=\"x\r\ny\rz\tw&#13;\"/>";
+    let doc = Document::parse(src.as_bytes()).unwrap();
+    let attr = &doc.root_element().attributes[0];
+    assert_eq!(attr.value, "x\ny\nz\tw\r");
+    assert_eq!(doc.text(&attr.value_span), "x\r\ny\rz\tw&#13;");
+    assert_eq!(doc.render(), src);
 }
