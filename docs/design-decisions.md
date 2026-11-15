@@ -49,11 +49,11 @@ document is reproduced exactly. F5 requires exact bytes, so:
   reconstructed from another library's positions, and the core needs no
   dependency. It is held to the spec's F5 tests: every fixture renders back
   byte for byte, and the spans tile the source with no gap or overlap.
-- **Output is rebuilt from the spans**, so an unmodified document renders
-  to its original bytes through the same path a splice will use. Each change the
-  spec requires (the `BTCPP_version` stamp, include-path rewrites) is a
-  **splice** at a known span. Untouched regions are never re-serialized, so
-  they cannot drift.
+- **Lossless output is rebuilt from the spans**, so an unmodified document
+  renders to its original bytes through the same path an edit's splice will
+  use. Untouched regions are never re-serialized, so they cannot drift.
+  Stamping and include rewriting are reference-mode changes and belong to
+  the reference writer below, not to the lossless writer.
 - Later editing (L3) uses the same rule: re-emit only the regions an edit
   touches, in the document's own detected style (indentation, quote
   character, line ending).
@@ -64,7 +64,7 @@ document is reproduced exactly. F5 requires exact bytes, so:
   lossless output never reformats, and reference output never carries
   source formatting.
 - Encoding: UTF-8 as required by the formats. Other declared encodings are
-  refused with a clear error until a fixture requires them.
+  refused as unsupported until a fixture requires them.
 
 ## D4. ZeroMQ: the `zmq` crate over libzmq — Decided
 
@@ -132,4 +132,7 @@ Verbs map one-to-one onto features, so each is testable on its own:
 a project is an export to a directory), `log dump`, `log write`, `monitor`
 (a terminal view), `record`. Lossless is the default by the operator's
 decision of 2026-11-15: a user's comments and formatting are never lost
-unless they ask for reference output. Output is plain text by default, with `--json` for scripts.
+unless they ask for reference output. A reference save of a project is
+an export: it needs a destination directory and refuses the project's own
+directory (spec §3.3). Output is plain text by default, with `--json` for
+scripts.
