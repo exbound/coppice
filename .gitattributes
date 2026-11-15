@@ -1,0 +1,2 @@
+# Fixture bytes are evidence: never convert line endings or treat them as text.
+tests/fixtures/** -text

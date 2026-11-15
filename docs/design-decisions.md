@@ -39,10 +39,18 @@ model. Readers can report source positions (`quick-xml`'s byte offsets,
 `roxmltree`'s attribute ranges), but nothing guarantees an unmodified
 document is reproduced exactly. F5 requires exact bytes, so:
 
-- The document keeps its **original bytes**. Parsing (with `quick-xml`'s
-  event reader, which reports byte positions) builds the tree model with a
-  **byte span** for every element, attribute, attribute value and text run.
-- **Saving unmodified output writes the original bytes.** Each change the
+- The document keeps its **original bytes**. Parsing builds the tree model
+  with a **byte span** for every node (element, start and end tag,
+  attribute name and raw value, text, comment, CDATA, declaration,
+  processing instruction, DOCTYPE, byte-order mark).
+- **The tokenizer is our own** (`coppice-doc/src/parse.rs`). Its only job is
+  to find where each construct starts and ends and to reject input that is
+  not well-formed, so the spans are exact by construction rather than
+  reconstructed from another library's positions, and the core needs no
+  dependency. It is held to the spec's F5 tests: every fixture renders back
+  byte for byte, and the spans tile the source with no gap or overlap.
+- **Output is rebuilt from the spans**, so an unmodified document renders
+  to its original bytes through the same path a splice will use. Each change the
   spec requires (the `BTCPP_version` stamp, include-path rewrites) is a
   **splice** at a known span. Untouched regions are never re-serialized, so
   they cannot drift.
@@ -77,8 +85,11 @@ the official `flatbuffers` crate then.
 
 ## D7. Errors and diagnostics — Decided
 
-Library crates return typed errors (`thiserror`) that carry the offset or
-span and the bytes found. Diagnostics, meaning conditions the spec says to
+Library crates return typed errors that carry the byte offset (or span)
+of the problem and, where it helps, the names involved (an end tag's
+expected and found names, the open element's name). `Display` and `std::error::Error` are written by hand: a
+derive crate would bring a procedural-macro build dependency for a handful
+of variants. Diagnostics, meaning conditions the spec says to
 report without refusing (dialect mismatch, port-versus-model mismatch,
 unknown uid, status byte 10), are a separate, collected list, never an
 error. The CLI uses `anyhow` at its top level only.

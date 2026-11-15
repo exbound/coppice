@@ -1,0 +1,26 @@
+<?xml version="1.0"  encoding="UTF-8" ?>
+<!-- before root -->
+<root  BTCPP_format = "4"	project_name='a &amp; b'
+      main_tree_to_execute="Main" >
+  <!-- inside root -->
+  <BehaviorTree ID="Main"><!-- right after start tag -->
+    <Sequence name="seq &lt;1&gt;"  >
+      <Script code=" x:=&apos;é&apos; &#x41;&#66; "/>
+      <AlwaysSuccess	_skipIf="a &gt; b"   />
+      <Unknown.Thing data-x='1'></Unknown.Thing>
+      <SubTree ID="Sub" _autoremap="true"/>
+    </Sequence>
+  </BehaviorTree>
+  <BehaviorTree ID="Sub">
+    <Fallback><AlwaysFailure/>text &amp; more<![CDATA[ <raw> & ]]><AlwaysSuccess /></Fallback>
+  </BehaviorTree>
+  <?custom-pi some data?>
+  <TreeNodesModel>
+    <Action ID="SayHi" editable="true">
+      <input_port name="msg" type="std::string" default="hi">the &quot;greeting&quot;</input_port>
+      <description>multi
+line</description>
+    </Action>
+  </TreeNodesModel>
+</root>
+<!-- after root -->

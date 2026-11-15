@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" project_name="Demo">
+    <include path="trees/main.xml"/>
+    <include path="../shared/common.xml" />
+    <include ros_pkg="some_pkg" path="bt/extra.xml"/>
+    <!-- Description of Node Models -->
+    <TreeNodesModel>
+        <Condition ID="IsReady"/>
+    </TreeNodesModel>
+</root>
