@@ -9,10 +9,16 @@
 //! without disturbing anything else.
 
 mod parse;
+mod tree;
 
 use std::ops::Range;
 
-pub use parse::ParseError;
+pub use parse::{MAX_DEPTH, ParseError};
+pub use tree::{
+    BUILTIN_BRANCHES, BUILTIN_LEAVES, Diagnostic, DiagnosticKind, Dialect, Include, ModelKind,
+    NodeModel, NotATreeDocument, Port, PortDirection, RESERVED_ATTRIBUTES, TreeDocument,
+    is_port_name,
+};
 
 /// A byte range into [`Document::source`].
 pub type Span = Range<usize>;
@@ -99,7 +105,8 @@ impl Document {
     /// top-level element is required. DTDs are not read: a DOCTYPE with an
     /// external identifier or an internal subset is refused as
     /// [`ParseError::Unsupported`] (a bare `<!DOCTYPE name>` is accepted),
-    /// as is a declared encoding other than UTF-8.
+    /// as are a declared encoding other than UTF-8 and element nesting
+    /// deeper than [`MAX_DEPTH`].
     pub fn parse(source: &[u8]) -> Result<Document, ParseError> {
         parse::parse(source)
     }

@@ -24,8 +24,11 @@ for the C1–C9 capability model and the target dossiers.
 The enumerated feature set (F1–F16) and each feature's coverage triplet
 (reference observed / implemented / verified) are in
 [`docs/engineering-spec.md`](docs/engineering-spec.md) §1. Implemented so
-far: F5 (lossless round-trip) and part of F1 (every element, attribute and
-node kind parsed into a span-preserving model), in `crates/coppice-doc`. The
+far, in `crates/coppice-doc`: F1, F2 and F4 (parsing a tree or project
+file in either dialect into a span-preserving model, with a behavior-tree
+view of root attributes, includes, trees and node models), F5 (lossless
+round-trip), and the single-document half of F10 (dialect suggestion and
+diagnostics). Loading a project with its included files (F3) is next. The
 `coppice` binary answers only `--version`.
 
 ## Build and test

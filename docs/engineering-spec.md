@@ -49,16 +49,16 @@ list.
 
 | # | Feature | Cap. | Ref. observed | Impl. | Verified | Spec |
 |---|---------|------|---------------|-------|----------|------|
-| F1 | Parse tree XML, v4 dialect, all elements and attributes | C3 | yes (surface §5) | partial — every element, attribute and node kind is parsed into the span model; the behavior-tree view (root attributes, includes, trees, models) is not built yet | partial — self-authored fixtures, `crates/coppice-doc/tests/lossless.rs` | §2.1 |
-| F2 | Parse tree XML, v3 dialect | C3 | yes (dossier G-5) | none | none | §2.2 |
+| F1 | Parse tree XML, v4 dialect, all elements and attributes | C3 | yes (surface §5) | yes — the span model (`lib.rs`, `parse.rs`) and the behavior-tree view (`tree.rs`: root attributes, includes, trees, models) | partial — self-authored and reference fixtures, `crates/coppice-doc/tests/lossless.rs` and `tree_document.rs`; no comparison against the reference's own reading | §2.1 |
+| F2 | Parse tree XML, v3 dialect | C3 | yes (dossier G-5) | yes — the same parser and view; v3 spellings kept as written | partial — one self-authored v3 fixture | §2.2 |
 | F3 | Parse `.btproj` projects and resolve `<include>` | C3 | yes (surface §3, dossier WP1) | none | none | §2.3 |
-| F4 | Parse `<TreeNodesModel>`, including tolerated extensions | C3 | yes (surface §3) | none | none | §2.4 |
+| F4 | Parse `<TreeNodesModel>`, including tolerated extensions | C3 | yes (surface §3) | yes — kinds, ports, `editable`, `<description>`, metadata, merged blocks | partial — self-authored and reference fixtures | §2.4 |
 | F5 | Lossless save (coppice's default): load then save unmodified, byte-identical | C3 | n/a — the reference has no lossless save (answers O-9); this is coppice's own guarantee | yes | partial — byte-exact over the self-authored fixture set plus the one-byte negative control | §3.1 |
 | F6 | Reference save of a tree file (`--reference`): the canonical writer | C3 | partial — canonical style established (answers); attribute wrapping and escaping beyond the fixtures OPEN | none | none | §3.2 |
 | F7 | Reference save in V3 mode | C3 | partial — dossier G-1 only; whether V3 saves also normalize is OPEN (O-12) | none | none | §3.5 |
 | F8 | Reference project export: flatten includes, copy trees, embed models | C3 | partial (answers O-1, O-2, O-4, O-6; include order, model selection and duplicate basenames are open) | none | none | §3.3 |
 | F9 | Reference save-as of a standalone tree: a bare canonical tree | C3 | yes (answers O-5) | none | none | §3.4 |
-| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | none | none | §2.5, §3.6 |
+| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Not yet across a project (models in the project file, trees in included files: F3), nor on logs or the monitor tree | partial — the F10 reference fixtures (the leaf-with-child trees) and inline inputs | §2.5, §3.6 |
 | F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | none | none | §4.1 |
 | F12 | Write `.btlog` | C2 | yes (surface §1) | none | none | §4.2 |
 | F13 | Monitor client: connect, FULLTREE, STATUS polling, heartbeat | C6 | yes (surface §2, dossier G-4/G-5) | none | none | §5.1–5.4 |
@@ -104,11 +104,13 @@ behavior, and vendor UI text.
   subtree is its own `<BehaviorTree ID>` block, and repeated instantiations
   consume successive blocks with the same ID.
 - The parser accepts any well-formed XML 1.0 in this shape, including
-  unknown elements and attributes, and keeps them (F5 depends on it). Two
+  unknown elements and attributes, and keeps them (F5 depends on it). Three
   stated limits are refused with a distinct "unsupported" error, never as
-  malformed: a declared encoding other than UTF-8, and any DTD beyond a
+  malformed: a declared encoding other than UTF-8; any DTD beyond a
   bare `<!DOCTYPE name>` (an external identifier or an internal subset),
-  because coppice does not read DTDs. Behavior-tree files use neither;
+  because coppice does not read DTDs; and element nesting deeper than
+  1024, four times the 256 BehaviorTree.CPP itself accepts (BT 4.9.0
+  `src/xml_parsing.cpp:541-548`). Behavior-tree files use none of these;
   supporting them is not planned until a fixture needs it.
 
 ### 2.2 Tree XML, v3 dialect (F2) — ESTABLISHED, dossier G-5

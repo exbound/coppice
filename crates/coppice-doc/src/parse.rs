@@ -9,8 +9,9 @@
 //! Stated limits (reported as [`ParseError::Unsupported`], never as
 //! malformed): coppice does not read DTDs, so a DOCTYPE with an external
 //! identifier or an internal subset is refused (a bare `<!DOCTYPE name>` is
-//! accepted), and any declared encoding other than UTF-8 is refused.
-//! Behavior-tree files use neither.
+//! accepted), any declared encoding other than UTF-8 is refused, and so is
+//! element nesting deeper than [`MAX_DEPTH`]. Behavior-tree files use none of
+//! these.
 
 use std::fmt;
 
@@ -96,6 +97,12 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+/// The deepest element nesting accepted. BehaviorTree.CPP itself refuses
+/// trees nested deeper than 256 (BT 4.9.0 `src/xml_parsing.cpp:541-548`);
+/// the cap here is four times that, and keeps every recursive walk over the
+/// model well inside the stack.
+pub const MAX_DEPTH: usize = 1024;
 
 fn malformed(offset: usize, message: impl Into<String>) -> ParseError {
     ParseError::Malformed {
@@ -441,6 +448,12 @@ impl<'a> Parser<'a> {
     }
 
     fn start_tag(&mut self, start: usize) -> Result<(), ParseError> {
+        if self.open.len() >= MAX_DEPTH {
+            return Err(unsupported(
+                start,
+                format!("elements nested deeper than {MAX_DEPTH}"),
+            ));
+        }
         let (name, mut at) = self.name_at(start + 1)?;
         let mut attributes: Vec<Attribute> = Vec::new();
         let self_closing = loop {
@@ -566,7 +579,7 @@ impl<'a> Parser<'a> {
 /// `base` of the source. Undefined or malformed references are errors.
 /// With `line_ends`, literal CR-LF and lone CR become LF (XML 1.0 §2.11);
 /// a CR written as `&#13;` is kept.
-fn decode(raw: &str, base: usize, line_ends: bool) -> Result<String, ParseError> {
+pub(crate) fn decode(raw: &str, base: usize, line_ends: bool) -> Result<String, ParseError> {
     let literal = |out: &mut String, text: &str| {
         if line_ends {
             out.push_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
