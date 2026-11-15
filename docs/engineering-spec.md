@@ -50,7 +50,7 @@ list.
 | F4 | Parse `<TreeNodesModel>`, including tolerated extensions | C3 | yes (surface §3) | none | none | §2.4 |
 | F5 | Lossless round-trip: load then save unmodified, byte-identical | C3 | partial (dossier G-1; wider properties are O-9) | none | none | §3.1 |
 | F6 | Reference save, V4: add the `BTCPP_version` stamp | C3 | partial — placement bytes OPEN | none | none | §3.2 |
-| F7 | Reference save, V3: in-place save adds nothing (no stamp) | C3 | yes (dossier G-1) | none | none | §3.3 |
+| F7 | Reference save, V3: in-place save adds nothing (no stamp) | C3 | partial (dossier G-1; O-9) | none | none | §3.3 |
 | F8 | Save-as: rewrite include paths relative to the new location | C3 | partial — algorithm OPEN | none | none | §3.4 |
 | F9 | Save-as of a single tree: wrap as a one-include project | C3 | partial — wrapper bytes OPEN | none | none | §3.5 |
 | F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | none | none | §2.5 |
@@ -112,12 +112,19 @@ spellings and never translate one into the other.
 
 - A `.btproj` is a tree-XML document whose `<root>` carries `project_name`
   and which typically holds `<include>` references and a `<TreeNodesModel>`.
-- `<include path>` is resolved relative to the including file's directory:
-  the library sets the base path to the loaded file's parent directory and
-  re-bases it for each nested include (BT 4.9.0
-  `src/xml_parsing.cpp:294,419-425`). The reference resolves every include
-  in its own sample corpus (dossier WP1); that its rule is the same is a
-  HYPOTHESIS, which O-4's fixtures will exercise.
+- `<include>` resolution follows the library (BT 4.9.0
+  `src/xml_parsing.cpp:294,383-425`):
+  - an absolute `path` is used as given;
+  - a relative `path` with a `ros_pkg` attribute is resolved under that
+    ROS package's share directory. coppice has no ROS package index, so it
+    reports such an include as unresolvable (a diagnostic) and keeps the
+    element unchanged;
+  - any other relative `path` is joined to the including file's directory,
+    and the base is re-set for each nested include.
+
+  The reference resolves every include in its own sample corpus
+  (dossier WP1). That its rule matches the library's is a HYPOTHESIS; the
+  F3 fixtures include nested and relative-parent includes.
 - A project may hold multiple trees across files; the reference loads a
   7-tree, 10-model project (dossier WP3). Loading builds one project model
   over all included documents, each document keeping its own bytes (§3.1).
@@ -140,11 +147,12 @@ spellings and never translate one into the other.
   attribute on model elements, and a `<description>` child element
   (surface §3). Both must parse, and both survive coppice's lossless save
   (F5).
-- The reference does **not** preserve `<description>` on save: a public
-  issue on the vendor's tracker, cited in surface §3, reports it "not
-  displayed, not preserved on save". So the reference-compatible save
-  (§3.2) must drop it. OPEN: the exact bytes left behind where it was, and
-  whether `editable` is preserved (§7, O-6).
+- A public issue on the vendor's tracker, cited in surface §3 and §6,
+  reports that the reference "does not display and does not preserve on
+  save" `<description>`. The report does not say which mode it applies to,
+  nor what bytes remain. Until O-6 is answered, the reference-compatible
+  save **keeps** `<description>` as-is, and the F6–F9 fixtures contain no
+  `<description>`. Whether `editable` is preserved is also O-6.
 
 ### 2.5 Dialect detection and diagnostics (F10)
 
@@ -211,8 +219,8 @@ fixtures avoid relying on them.
   and character, position relative to the other attributes), and the
   behavior when `BTCPP_version` is already present, with the same or a
   different value (§7, O-1, O-2).
-- The reference drops `<description>` elements from node models on save
-  (§2.4, surface §3); the bytes left behind are O-6.
+- `<description>` in node models is kept until O-6 settles what the
+  reference does with it (§2.4).
 - OPEN: which files a project save writes. The record says a bare tree file
   is rewritten only when its content was modified (dossier G-1), so an
   unmodified included tree file is probably left untouched, stamp included.
@@ -412,9 +420,14 @@ reference behavior from dossier G-2.
   as a possible gap. It is a heuristic, since the publisher gives no
   explicit signal. The polling rate must drain faster than the tree fills
   the buffer.
-- **Stop** (`r` + `stop`): sets recording off.
+- **Stop** (`r` + `stop`, `:459-462`): sets recording off. It neither
+  returns nor clears the buffer, so records captured since the last drain
+  are still there.
+- **Ending a recording** is therefore three steps, in order: send `stop`,
+  send one final `t` drain, then write the file. Writing on `stop` alone
+  loses the tail.
 - **Writing the file:** coppice writes a `.btlog` (§4.2) from the FULLTREE
-  XML, T0 taken from the start reply, and the drained records in order.
+  XML, T0 taken from the start reply, and every drained record in order.
 - **Record flow** (dossier G-2): the destination path is chosen *before*
   recording starts. The file is written when recording stops, atomically
   in coppice's case (see §4.2 for how that differs from the reference).
@@ -463,7 +476,7 @@ public research record before it enters this spec (see `clean-room.md`).
 | O-3 | V3 TreeNodesModel rule: which models are embedded on a fresh save and which are dropped | L3 (not v1) | input/output pairs covering built-in, declared-custom and included models |
 | O-4 | Include rewriting: `..` paths, separators, absolute inputs, nested directories | F8 | input/output pairs |
 | O-5 | The wrapper project written by save-as of a single tree | F9 | an input/output pair |
-| O-6 | The exact bytes the reference's save leaves where a `<description>` was dropped, and whether it preserves `editable` | F6 | an input/output pair |
+| O-6 | What the reference's save does with `<description>` in node models (kept or dropped, in which mode, and the bytes left behind), and whether it preserves `editable` | F6 | an input/output pair |
 | O-7 | The reference's reconnect back-off after a publisher restart | F13 | a timing description; non-blocking (coppice's own policy stands) |
 | O-8 | On a project save, which files the reference writes: is an unmodified included tree file left untouched, stamp included? | F6 | a project with an unmodified include, saved, with every file hashed before and after |
 | O-9 | Whether the reference preserves quoting, the XML declaration, character references, CRLF line endings and a missing trailing newline | F6–F9 | input/output pairs, each varying one property |
@@ -497,15 +510,15 @@ committed.
 | Feature | Oracle | Tolerance |
 |---------|--------|-----------|
 | F1–F4, F10 | parse of fixture set 1; diagnostics as a reviewed snapshot | exact |
-| F5 | lossless load then save, compared with the input, over the awkward set; and a negative control: a fixture whose only difference is one byte of inter-attribute whitespace must produce output that differs in exactly that byte, so a normalizing writer fails | byte-exact |
+| F5 | lossless load then save, compared with the input, over the awkward set; and a negative control: a fixture pair differing only by one substituted whitespace byte between attributes (space versus tab) must produce outputs that differ in exactly that byte, so a normalizing writer fails | byte-exact |
 | F6, F8, F9 | save, compared with the reference's output (fixture set 2) | byte-exact |
-| F7 | the same v3 and v4 documents saved in reference mode under each dialect: V3 output equals the input, V4 output carries the stamp. A writer that ignores the mode fails one of the two | byte-exact |
-| F11 | decode compared with the harness's own record of what it fed `FileLogger2` (uid, status, offset per transition) | exact |
-| F12 | from scratch: given the harness's XML, T0 and transition list, coppice's writer output equals the `FileLogger2` file for the same inputs, with no decoded file involved; plus write-then-read | byte-exact |
+| F7 | a v3 `.btproj` saved in place in reference mode under V3 must equal its input byte for byte. The same file saved under V4 must differ, carrying a `BTCPP_version` attribute on `<root>`; only the attribute's presence is checked until O-1 pins its bytes. A writer that ignores the mode fails one half. No cross-dialect claim beyond that | V3 half byte-exact; V4 half presence only |
+| F11 | `FileLogger2` takes T0 privately at construction (BT 4.9.0 `src/loggers/bt_file_logger_v2.cpp:78,107`), so the harness records each transition's uid, status and **absolute** timestamp through a second, absolute-mode status logger on the same tree. Both loggers are notified with the same time point. The harness then reads T0 from the file. coppice's decode must give the same uid and status, and offsets equal to the harness's absolute time minus T0 | exact |
+| F12 | from scratch: coppice writes from the harness's XML, the T0 read from the `FileLogger2` file, and the harness's transition list (offsets computed as for F11), with no decoded record involved; the output must equal the `FileLogger2` file. Plus write-then-read | byte-exact |
 | F13, F15 | session against the BT.CPP harness publisher. The harness ticks only on command and is quiescent while the client samples. Tree XML equals the harness's own `WriteTreeToXML` output; blackboard equals the harness's dump; replies to every v1 tag are checked against §5.3 | exact |
 | F13 (`btview mock`) | connect, FULLTREE, STATUS and BLACKBOARD parse with no error, and the decoded tree matches the mock's served XML | exact on what the mock serves |
-| F14 | the harness drives scripted transitions (RUNNING to SUCCESS to IDLE, FAILURE to IDLE, SKIPPED to IDLE), and coppice decodes 12, 13 and 14 as idle-after-SUCCESS, -FAILURE and -SKIPPED, not as plain IDLE. Unit tests on synthetic buffers cover 10 and out-of-range bytes, which no conformant publisher emits | exact |
-| F16 | live recording from the harness compared with a `FileLogger2` run on the same tree and the same scripted ticks; plus a test that drains exactly 1000 records and expects the possible-gap report | same uid/status sequence; offsets within one tick |
+| F14 | the harness drives scripted transitions (RUNNING halted to IDLE, RUNNING to SUCCESS to IDLE, FAILURE to IDLE, SKIPPED to IDLE), and coppice decodes 11, 12, 13 and 14 as idle-after-RUNNING, -SUCCESS, -FAILURE and -SKIPPED, not as plain IDLE. Unit tests on synthetic buffers cover 10 and out-of-range bytes, which no conformant publisher emits | exact |
+| F16 | live recording from the harness compared with a `FileLogger2` run on the same tree and the same scripted ticks; plus a test that drains exactly 1000 records and expects the possible-gap report | same uid/status sequence; absolute times (T0 + offset) within one tick |
 
 Reference re-baselining against Groot2 v1.10.0 itself happens on the
 analysis side and returns as updated public fixtures. CI never needs the

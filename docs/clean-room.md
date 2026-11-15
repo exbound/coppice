@@ -25,7 +25,7 @@ sources may be read and cited on either side.
   question addressed to the analysis side (spec §7), not something looked
   up elsewhere.
 - **Review.** Spec changes are reviewed by the analysis side for leaked
-  mechanics or vendor text before they merge.
+  mechanics or vendor text.
 
 ## Record
 
@@ -33,7 +33,7 @@ sources may be read and cited on either side.
 |------|------|-----|------|
 | 2026-11-13 to 2026-11-14 | analysis | the operator, with an analysis agent session | observed the reference (work packages G-0 to G-6) and published the results to the research record |
 | 2026-11-15 | implementation | an implementation agent session, directed by the operator | wrote `docs/engineering-spec.md` and `docs/design-decisions.md` from the public research record at commit `bc319c2` and the BehaviorTree.CPP 4.9.0 source |
-| 2026-11-15 | exposure note | the implementation agent session | before drafting the spec, while assessing the plan, read the analysis side's non-public readiness summary of the observations (prose describing observed behavior; no vendor code, binaries or vendor-authored files). The spec was then written from the public record only, and its draft was checked against that record line by line, which removed two details that came from the summary. A characterization of the failing sample files was dropped. A blackboard edge case (unknown names are skipped) was first kept as a HYPOTHESIS; it is open-source library behavior, not reference-product behavior, so it now cites the BehaviorTree.CPP 4.9.0 publisher source. No reference-product fact in the spec rests on the summary. Analysis-side review: pending. |
+| 2026-11-15 | exposure note | the implementation agent session | before drafting the spec, while assessing the plan, read the analysis side's non-public readiness summary of the observations (prose describing observed behavior; no vendor code, binaries or vendor-authored files). The spec was then written from the public record and the open-source BehaviorTree.CPP code only, and its draft was checked against that record line by line, which removed two details that came from the summary. A characterization of the failing sample files was dropped. A blackboard edge case (unknown names are skipped) was first kept as a HYPOTHESIS; it is open-source library behavior, not reference-product behavior, so it now cites the BehaviorTree.CPP 4.9.0 publisher source. No reference-product fact in the spec rests on the summary. Analysis-side review: requested; by the operator's decision of 2026-11-15 the spec merges once green and through two rounds of independent review, and the analysis-side review follows the merge. |
 
 The operator approved this arrangement, including the exposure note, on
 2026-11-15.
