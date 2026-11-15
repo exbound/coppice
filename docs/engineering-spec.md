@@ -244,8 +244,9 @@ byte, as fixtures `out-o5/in-o5-single.xml` and `out-o6/tree.xml` show:
 7. **Attribute wrapping:** in tree files, every two-attribute tag the
    fixtures show (`<root>` and model tags) has its second attribute on a
    continuation line aligned to the first attribute's column (fixture
-   `out-o6/tree.xml`: 6, 12 and 15 spaces). No fixture tag has three or
-   more attributes.
+   `out-o6/tree.xml`: 6, 12 and 15 spaces). No tree-file tag in the
+   fixtures has three or more attributes (project-file roots with three
+   stay on one line, as project files never wrap).
    That the rule is "two or more attributes" rather than a length
    threshold is a **HYPOTHESIS**: the answers doc proposes a length band,
    but its one-line counter-example is in a project file, where nothing
@@ -253,15 +254,17 @@ byte, as fixtures `out-o5/in-o5-single.xml` and `out-o6/tree.xml` show:
    (§7, O-10).
 8. **Which models the `<TreeNodesModel>` block holds:** every written
    tree in the fixtures holds exactly the declared models that the tree
-   **uses**, and nothing else. `out-o6/tree.xml` uses three declared
+   **uses** (a model is used when a node's element name equals the
+   model's `ID`; the explicit `<Action ID="…"/>` form and subtree
+   references are not covered by the fixtures), and nothing else. `out-o6/tree.xml` uses three declared
    models and embeds all three; `out-o2-same/tree.xml`,
    `out-o2-diff/tree.xml` and `in-o1-proj-corrected/tree.xml` use none of
    their project's declared model and embed nothing; `comments-rt.xml`
    drops a model its tree never uses. This rule is a **HYPOTHESIS**: it
    fits every written file, and no fixture has a tree using some declared
-   models but not others (§7, O-14). The answers doc's "the project's
-   models are embedded into every copied tree" is contradicted by the
-   `out-o2-*` exports.
+   models but not others (§7, O-14). The answers doc's statement that a
+   project export embeds the project's models into every copied tree file
+   is contradicted by the `out-o2-*` exports.
 
 The comment in rule 4 is a format element the reference writes into
 every file, and it already appears in public ecosystem project files
@@ -290,10 +293,13 @@ nodes, and the spacing between two or more `<BehaviorTree>` elements
 The reference never writes a project file in place; its only project
 write is an **export to a directory** (answers O-8). coppice's
 `save --reference` of a project is that export, and it takes the
-destination directory as a required argument. coppice refuses the
-project's own directory as the destination: the reference's export
-there overwrites the project file and copies nested trees in beside it
-(answers O-4), which a plain save must not do.
+destination directory as a required argument. The destination must be a
+new or empty directory, and coppice never overwrites an existing file:
+the reference's export overwrites whatever shares a written file's name,
+including the project file and, because includes are flattened to
+basenames, any source tree that happens to sit in the destination
+(answers O-4). An export whose includes cannot all be resolved is refused
+before anything is written.
 
 - **Project file** (fixtures `out-o2-same/proj.btproj`,
   `out-o4/proj.btproj`, `out-o6/proj.btproj`): line 1 is the declaration;
@@ -565,7 +571,7 @@ public research record before it enters this spec (see `clean-room.md`).
 | O-11 | Project export when two includes share a basename (`a/tree.xml`, `b/tree.xml`) | F8 | an input/output pair |
 | O-12 | Does a V3-mode save normalize, and to what style? | F7 | V3 inputs with the O-9 awkward properties, saved in V3 mode |
 | O-13 | Escaping, content and layout in the canonical writer: `<`, `>`, `"`, `'` and non-ASCII in attribute values; text content inside a node; spacing between two or more `<BehaviorTree>` elements | F6 | one input per property, saved |
-| O-14 | Model selection: when a tree uses some of its project's declared models but not others, which go into the written tree's `<TreeNodesModel>`, on per-file save and on export? | F6, F8 | a project with two declared models whose tree uses one, saved per file and exported |
+| O-14 | Model selection: when a tree uses some of its declared models but not others, which go into the written tree's `<TreeNodesModel>`, on per-file save, on export, and on a standalone save-as? | F6, F8, F9 | a project with two declared models whose tree uses one, saved per file and exported; and a standalone tree that declares two models and uses one, saved-as |
 | O-15 | The O-4 input `../outside.xml` was not published (only its hash is in the answers doc), so the O-4 export cannot be replayed in full | F8 | the input file itself |
 | O-16 | Version stamp cases not measured: a newer stamp than the target; an existing stamp in a tree file; a stamp not immediately after `BTCPP_format` | F6, F8 | one input per case, saved |
 
@@ -591,11 +597,11 @@ committed.
 
    | Feature | Input (`tests/fixtures/reference/o-answers/…`) | Route | Reference output |
    |---|---|---|---|
-   | F6 | `in-o2-same-corrected/tree.xml` (identical bytes to the tree the O-8 save started from) | per-file save, unmodified | `in-o1-proj-corrected/tree.xml` (the reference's rewrite) |
+   | F6 | `in-o2-same-corrected/tree.xml` (identical bytes to the tree the O-8 save started from; that save ran inside the `in-o1-proj-corrected` project) | per-file save, unmodified | `in-o1-proj-corrected/tree.xml` (the reference's rewrite) |
    | F8 | `in-o2-same-corrected/` | project export | `out-o2-same/` |
    | F8 | `in-o2-diff-corrected/` (older stamp, upgrade chosen) | project export | `out-o2-diff/` |
    | F8 | `in-o6-model/` | project export | `out-o6/` |
-   | F8 | `in-o4-paths/` (partial: O-15; the absolute include is a neutral path that no machine has) | project export | `out-o4/proj.btproj`, `out-o4/tree.xml`, `out-o4/tree2.xml`; `abs.xml` and `outside.xml` cannot be replayed |
+   | F6 | `in-o4-paths/sub/tree.xml`, `in-o4-paths/deep/nest/tree2.xml` (as single trees; O-15: the full O-4 export is not replayable) | canonical tree write | `out-o4/tree.xml`, `out-o4/tree2.xml` |
    | F9 | `in-o5-single.xml` | standalone save-as | `out-o5/in-o5-single.xml` |
    | F9 | each `in-o9-awkward/<name>.xml` | standalone save-as | `in-o9-awkward/<name>-rt.xml` |
    | F10 | `in-o1-proj/`, `in-o2-same/`, `in-o2-diff/` (an Action with a child) | load | refused: a diagnostic, and no reference-mode save (§3.6) |
@@ -609,7 +615,7 @@ committed.
 
 | Feature | Oracle | Tolerance |
 |---------|--------|-----------|
-| F1–F4, F10 | parse of fixture set 1; diagnostics as a reviewed snapshot | exact |
+| F1–F4, F10 | parse of fixture set 1, and the F10 rows of the set-2 table (each refused with a diagnostic naming the leaf node that has a child); diagnostics as a reviewed snapshot | exact |
 | F5 | lossless save, compared with the input, over the awkward set; and a negative control: a fixture pair differing only by one substituted whitespace byte between attributes (space versus tab) must produce outputs that differ in exactly that byte, so a normalizing writer fails | byte-exact |
 | F6 | the F6 row of the table above: reference-mode per-file save, compared with the reference's output | byte-exact |
 | F8 | the F8 rows of the table above: reference-mode export to a fresh directory; every file the reference wrote is compared, and no other file may be written | byte-exact |

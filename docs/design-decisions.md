@@ -133,6 +133,6 @@ a project is an export to a directory), `log dump`, `log write`, `monitor`
 (a terminal view), `record`. Lossless is the default by the operator's
 decision of 2026-11-15: a user's comments and formatting are never lost
 unless they ask for reference output. A reference save of a project is
-an export: it needs a destination directory and refuses the project's own
-directory (spec §3.3). Output is plain text by default, with `--json` for
+an export: it needs a new or empty destination directory and never
+overwrites an existing file (spec §3.3). Output is plain text by default, with `--json` for
 scripts.
