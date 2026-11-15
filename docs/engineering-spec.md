@@ -44,11 +44,11 @@ list.
 
 | # | Feature | Cap. | Ref. observed | Impl. | Verified | Spec |
 |---|---------|------|---------------|-------|----------|------|
-| F1 | Parse tree XML, v4 dialect, all elements and attributes | C3 | yes (surface §5) | none | none | §2.1 |
+| F1 | Parse tree XML, v4 dialect, all elements and attributes | C3 | yes (surface §5) | partial — every element, attribute and node kind is parsed into the span model; the behavior-tree view (root attributes, includes, trees, models) is not built yet | partial — self-authored fixtures, `crates/coppice-doc/tests/lossless.rs` | §2.1 |
 | F2 | Parse tree XML, v3 dialect | C3 | yes (dossier G-5) | none | none | §2.2 |
 | F3 | Parse `.btproj` projects and resolve `<include>` | C3 | yes (surface §3, dossier WP1) | none | none | §2.3 |
 | F4 | Parse `<TreeNodesModel>`, including tolerated extensions | C3 | yes (surface §3) | none | none | §2.4 |
-| F5 | Lossless round-trip: load then save unmodified, byte-identical | C3 | partial (dossier G-1; wider properties are O-9) | none | none | §3.1 |
+| F5 | Lossless round-trip: load then save unmodified, byte-identical | C3 | partial (dossier G-1; wider properties are O-9) | yes | partial — byte-exact over the self-authored fixture set plus the one-byte negative control; reference-save properties wait on O-9 | §3.1 |
 | F6 | Reference save, V4: add the `BTCPP_version` stamp | C3 | partial — placement bytes OPEN | none | none | §3.2 |
 | F7 | Reference save, V3: in-place save adds nothing (no stamp) | C3 | partial (dossier G-1; O-9) | none | none | §3.3 |
 | F8 | Save-as: rewrite include paths relative to the new location | C3 | partial — algorithm OPEN | none | none | §3.4 |

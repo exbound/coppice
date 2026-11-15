@@ -1,0 +1,9 @@
+<root BTCPP_format="3" main_tree_to_execute="M">
+  <BehaviorTree ID="M">
+    <Sequence>
+      <SetBlackboard output_key="k" value="1"/>
+      <SubTreePlus ID="S" __autoremap="1"/>
+    </Sequence>
+  </BehaviorTree>
+  <BehaviorTree ID="S"><AlwaysSuccess/></BehaviorTree>
+</root>
