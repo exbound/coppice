@@ -9,10 +9,15 @@
 //! without disturbing anything else.
 
 mod parse;
+mod tree;
 
 use std::ops::Range;
 
 pub use parse::ParseError;
+pub use tree::{
+    BUILTIN_LEAVES, Diagnostic, DiagnosticKind, Dialect, Include, ModelKind, NodeModel,
+    NotATreeDocument, Port, PortDirection, RESERVED_ATTRIBUTES, TreeDocument,
+};
 
 /// A byte range into [`Document::source`].
 pub type Span = Range<usize>;

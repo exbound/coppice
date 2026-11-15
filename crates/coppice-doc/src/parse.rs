@@ -566,7 +566,7 @@ impl<'a> Parser<'a> {
 /// `base` of the source. Undefined or malformed references are errors.
 /// With `line_ends`, literal CR-LF and lone CR become LF (XML 1.0 §2.11);
 /// a CR written as `&#13;` is kept.
-fn decode(raw: &str, base: usize, line_ends: bool) -> Result<String, ParseError> {
+pub(crate) fn decode(raw: &str, base: usize, line_ends: bool) -> Result<String, ParseError> {
     let literal = |out: &mut String, text: &str| {
         if line_ends {
             out.push_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
