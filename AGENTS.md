@@ -18,6 +18,30 @@ one subsystem (C2), not the goal. The target's research dossier in
 `exbound/research` is the evidence record; this repo is the independent software
 built from the clean-room functional specification, plus its tests.
 
+## This repository — coppice
+
+An independent, Groot2-*compatible* behavior-tree IDE. The reference product is
+Groot2 (proprietary); the open-source BehaviorTree.CPP (MIT) is the public
+specification of most of the interface. The research record is the Groot2
+dossier and compatibility-surface study in `exbound/research`.
+
+- **v1 is a headless Rust core plus a command-line tool**: lossless load and
+  save of projects and tree XML in both dialects, `.btlog` read/write, and a
+  terminal monitor client. No GUI crate enters the core; a GUI is a later,
+  separate crate.
+- **Inputs for implementation are this repository and `exbound/research`,
+  nothing else.** Do not read, copy from, or cite any non-public analysis
+  material, even when it is on the same machine. If a fact the code needs is
+  not in `docs/engineering-spec.md` or the public research record, the
+  answer is a spec change (with its public source), not a look elsewhere.
+- **Public oracles only in CI:** a real BehaviorTree.CPP 4.x
+  `Groot2Publisher`, the Apache-2.0 `btview mock`, and self-authored
+  fixtures with provenance in `tests/fixtures/README.md`. Vendor sample
+  files are never committed.
+- **BehaviorTree.CPP is not the proprietary original.** Its sources may be
+  read and cited (with version and path), as the research record already
+  does.
+
 ## Clean-room wall — the rule that defines the project
 
 Where this repo reimplements a proprietary original, the work is split by a
