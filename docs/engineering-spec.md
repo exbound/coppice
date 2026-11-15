@@ -98,8 +98,13 @@ behavior, and vendor UI text.
   `_fullpath` (subtree instance path). In runtime XML each instantiated
   subtree is its own `<BehaviorTree ID>` block, and repeated instantiations
   consume successive blocks with the same ID.
-- The parser accepts any well-formed XML in this shape, including unknown
-  elements and attributes, and keeps them (F5 depends on it).
+- The parser accepts any well-formed XML 1.0 in this shape, including
+  unknown elements and attributes, and keeps them (F5 depends on it). Two
+  stated limits are refused with a distinct "unsupported" error, never as
+  malformed: a declared encoding other than UTF-8, and a DTD internal
+  subset that declares entities or uses parameter-entity references.
+  Behavior-tree files use neither; supporting them is not planned until a
+  fixture needs it.
 
 ### 2.2 Tree XML, v3 dialect (F2) — ESTABLISHED, dossier G-5
 

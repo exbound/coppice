@@ -1,9 +1,15 @@
 //! The parser: source bytes to a span-annotated [`Document`].
 //!
-//! A small hand-written tokenizer. Its only job is to find where each
-//! construct starts and ends, so every span is exact by construction, and
-//! to reject input that is not well-formed. Nothing is normalized: text and
-//! markup are recorded as byte ranges into the untouched source.
+//! A small hand-written tokenizer. Its job is to find where each construct
+//! starts and ends, so every span is exact by construction, and to reject
+//! input that is not well-formed XML 1.0 (fifth edition) with the byte
+//! offset of the problem. Nothing is normalized: text and markup are
+//! recorded as byte ranges into the untouched source.
+//!
+//! Stated limits (reported as [`ParseError::Unsupported`], never as
+//! malformed): a DTD internal subset that declares entities or contains
+//! parameter-entity references, and any declared encoding other than UTF-8.
+//! Behavior-tree files use neither.
 
 use std::fmt;
 
@@ -23,6 +29,13 @@ pub enum ParseError {
         /// Byte offset where the problem was detected.
         offset: usize,
         /// What the problem is, in words.
+        message: String,
+    },
+    /// Well-formed XML that uses a feature coppice does not support.
+    Unsupported {
+        /// Byte offset of the unsupported construct.
+        offset: usize,
+        /// What is unsupported, in words.
         message: String,
     },
     /// An end tag does not match the open element.
@@ -46,7 +59,8 @@ pub enum ParseError {
         /// Byte offset of the second top-level element, or the source
         /// length when there is none.
         offset: usize,
-        /// How many top-level elements were found.
+        /// 0 when the source has no top-level element; 2 when a second one
+        /// starts (parsing stops there, so later ones are not counted).
         count: usize,
     },
 }
@@ -57,6 +71,9 @@ impl fmt::Display for ParseError {
             ParseError::NotUtf8 { offset } => write!(f, "not valid UTF-8 at byte {offset}"),
             ParseError::Malformed { offset, message } => {
                 write!(f, "malformed XML at byte {offset}: {message}")
+            }
+            ParseError::Unsupported { offset, message } => {
+                write!(f, "unsupported XML at byte {offset}: {message}")
             }
             ParseError::MismatchedEndTag {
                 offset,
@@ -86,12 +103,54 @@ fn malformed(offset: usize, message: impl Into<String>) -> ParseError {
     }
 }
 
+fn unsupported(offset: usize, message: impl Into<String>) -> ParseError {
+    ParseError::Unsupported {
+        offset,
+        message: message.into(),
+    }
+}
+
+/// XML whitespace: space, tab, carriage return, line feed. Nothing else.
+fn is_xml_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\r' | '\n')
+}
+
+/// The `Char` production of XML 1.0.
+fn is_xml_char(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
+}
+
+/// The `NameStartChar` production of XML 1.0 (fifth edition).
+fn is_name_start(c: char) -> bool {
+    matches!(c,
+        ':' | 'A'..='Z' | '_' | 'a'..='z'
+        | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{2FF}'
+        | '\u{370}'..='\u{37D}' | '\u{37F}'..='\u{1FFF}' | '\u{200C}'..='\u{200D}'
+        | '\u{2070}'..='\u{218F}' | '\u{2C00}'..='\u{2FEF}' | '\u{3001}'..='\u{D7FF}'
+        | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}' | '\u{10000}'..='\u{EFFFF}')
+}
+
+/// The `NameChar` production of XML 1.0 (fifth edition).
+fn is_name_char(c: char) -> bool {
+    is_name_start(c)
+        || matches!(c, '-' | '.' | '0'..='9' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}')
+}
+
 pub(crate) fn parse(bytes: &[u8]) -> Result<Document, ParseError> {
     let source = std::str::from_utf8(bytes)
         .map_err(|e| ParseError::NotUtf8 {
             offset: e.valid_up_to(),
         })?
         .to_owned();
+    if let Some((i, c)) = source
+        .char_indices()
+        .find(|&(i, c)| !(is_xml_char(c) || (i == 0 && c == '\u{feff}')))
+    {
+        return Err(malformed(
+            i,
+            format!("character U+{:04X} is not allowed in XML", c as u32),
+        ));
+    }
     let nodes = Parser::new(&source).run()?;
     Ok(Document { source, nodes })
 }
@@ -103,6 +162,7 @@ struct Parser<'a> {
     open: Vec<Element>,
     top: Vec<Node>,
     top_elements: usize,
+    seen_doctype: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -113,6 +173,7 @@ impl<'a> Parser<'a> {
             open: Vec::new(),
             top: Vec::new(),
             top_elements: 0,
+            seen_doctype: false,
         }
     }
 
@@ -131,17 +192,19 @@ impl<'a> Parser<'a> {
             if !rest.starts_with('<') {
                 self.text(start)?;
             } else if rest.starts_with("<!--") {
-                let end = self.find_from(start + 4, "-->", "comment")? + 3;
+                let end = self.comment_end(start)?;
                 self.emit(Node::Comment(start..end));
             } else if rest.starts_with("<![CDATA[") {
                 if self.open.is_empty() {
                     return Err(malformed(start, "CDATA outside the top-level element"));
                 }
-                let end = self.find_from(start + 9, "]]>", "CDATA section")? + 3;
+                let end = self.find_from(start, start + 9, "]]>", "CDATA section")? + 3;
                 self.emit(Node::CData(start..end));
             } else if rest.starts_with("<!DOCTYPE") {
-                let end = self.doctype_end(start)?;
+                let end = self.doctype(start)?;
                 self.emit(Node::DocType(start..end));
+            } else if rest.starts_with("<!") {
+                return Err(malformed(start, "unknown markup declaration"));
             } else if rest.starts_with("<?") {
                 self.processing_instruction(start)?;
             } else if rest.starts_with("</") {
@@ -174,19 +237,41 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Byte offset of `needle`, searching from `from`; an error if absent.
-    fn find_from(&self, from: usize, needle: &str, what: &str) -> Result<usize, ParseError> {
+    /// Byte offset of `needle` searching from `from`; if absent, an
+    /// "unterminated" error reported at `construct_start`.
+    fn find_from(
+        &self,
+        construct_start: usize,
+        from: usize,
+        needle: &str,
+        what: &str,
+    ) -> Result<usize, ParseError> {
         self.src[from..]
             .find(needle)
             .map(|i| from + i)
-            .ok_or_else(|| malformed(self.pos, format!("unterminated {what}")))
+            .ok_or_else(|| malformed(construct_start, format!("unterminated {what}")))
+    }
+
+    fn comment_end(&self, start: usize) -> Result<usize, ParseError> {
+        let close = self.find_from(start, start + 4, "-->", "comment")?;
+        let body = &self.src[start + 4..close];
+        if let Some(i) = body.find("--") {
+            return Err(malformed(
+                start + 4 + i,
+                "'--' is not allowed inside a comment",
+            ));
+        }
+        if body.ends_with('-') {
+            return Err(malformed(close - 1, "a comment cannot end with '--->'"));
+        }
+        Ok(close + 3)
     }
 
     fn text(&mut self, start: usize) -> Result<(), ParseError> {
         let end = self.rest().find('<').map_or(self.src.len(), |i| start + i);
         let raw = &self.src[start..end];
         if self.open.is_empty() {
-            if let Some(i) = raw.find(|c: char| !matches!(c, ' ' | '\t' | '\r' | '\n')) {
+            if let Some(i) = raw.find(|c: char| !is_xml_space(c)) {
                 return Err(malformed(start + i, "text outside the top-level element"));
             }
         } else {
@@ -199,29 +284,117 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn doctype_end(&self, start: usize) -> Result<usize, ParseError> {
-        // An internal subset `[...]` may contain '>' characters.
-        let body = &self.src[start..];
-        let gt = body.find('>');
-        let bracket = body.find('[');
-        let end = match (bracket, gt) {
-            (Some(b), Some(g)) if b < g => {
-                let close = self.find_from(start + b, "]", "DOCTYPE internal subset")?;
-                self.find_from(close, ">", "DOCTYPE")?
-            }
-            (_, Some(g)) => start + g,
-            (_, None) => return Err(malformed(start, "unterminated DOCTYPE")),
+    /// A `<!DOCTYPE …>` at `start`; returns the offset just past its `>`.
+    fn doctype(&mut self, start: usize) -> Result<usize, ParseError> {
+        if !self.open.is_empty() || self.top_elements > 0 {
+            return Err(malformed(
+                start,
+                "DOCTYPE after the top-level element starts",
+            ));
+        }
+        if self.seen_doctype {
+            return Err(malformed(start, "a second DOCTYPE"));
+        }
+        self.seen_doctype = true;
+        let mut at = start + "<!DOCTYPE".len();
+        let after_ws = self.skip_whitespace(at);
+        if after_ws == at {
+            return Err(malformed(at, "expected whitespace after <!DOCTYPE"));
+        }
+        let (_, name_end) = self.name_at(after_ws)?;
+        at = name_end;
+        // Optional external ID: SYSTEM "…" | PUBLIC "…" "…".
+        let ws = self.skip_whitespace(at);
+        let keyword_quotes = if self.src[ws..].starts_with("SYSTEM") && ws > at {
+            at = ws + "SYSTEM".len();
+            1
+        } else if self.src[ws..].starts_with("PUBLIC") && ws > at {
+            at = ws + "PUBLIC".len();
+            2
+        } else {
+            0
         };
-        Ok(end + 1)
+        for _ in 0..keyword_quotes {
+            let q = self.skip_whitespace(at);
+            if q == at {
+                return Err(malformed(
+                    at,
+                    "expected whitespace before a quoted identifier",
+                ));
+            }
+            at = self.quoted_end(q)?;
+        }
+        at = self.skip_whitespace(at);
+        if self.src[at..].starts_with('[') {
+            at = self.internal_subset(at + 1)?;
+            at = self.skip_whitespace(at);
+        }
+        if self.src[at..].starts_with('>') {
+            Ok(at + 1)
+        } else if at >= self.src.len() {
+            Err(malformed(start, "unterminated DOCTYPE"))
+        } else {
+            Err(malformed(at, "unexpected content in DOCTYPE"))
+        }
+    }
+
+    /// A quoted literal starting at `q`; returns the offset past its close.
+    fn quoted_end(&self, q: usize) -> Result<usize, ParseError> {
+        let quote = match self.src[q..].chars().next() {
+            Some(c @ ('"' | '\'')) => c,
+            _ => return Err(malformed(q, "expected a quoted literal")),
+        };
+        self.src[q + 1..]
+            .find(quote)
+            .map(|i| q + 1 + i + 1)
+            .ok_or_else(|| malformed(q, "unterminated quoted literal"))
+    }
+
+    /// The body of an internal subset starting at `at` (just past `[`);
+    /// returns the offset just past its `]`.
+    fn internal_subset(&self, mut at: usize) -> Result<usize, ParseError> {
+        loop {
+            at = self.skip_whitespace(at);
+            let rest = &self.src[at..];
+            if rest.starts_with(']') {
+                return Ok(at + 1);
+            } else if rest.starts_with("<!--") {
+                at = self.comment_end(at)?;
+            } else if rest.starts_with("<?") {
+                at = self.find_from(at, at + 2, "?>", "processing instruction")? + 2;
+            } else if rest.starts_with("<!ENTITY") {
+                return Err(unsupported(
+                    at,
+                    "entity declarations in a DTD internal subset",
+                ));
+            } else if rest.starts_with("<!") {
+                // ELEMENT, ATTLIST, NOTATION: scan to '>' outside quotes.
+                let mut i = at + 2;
+                loop {
+                    match self.src[i..].chars().next() {
+                        None => return Err(malformed(at, "unterminated markup declaration")),
+                        Some('>') => break,
+                        Some('"' | '\'') => i = self.quoted_end(i)?,
+                        Some(c) => i += c.len_utf8(),
+                    }
+                }
+                at = i + 1;
+            } else if rest.starts_with('%') {
+                return Err(unsupported(at, "parameter-entity references in a DTD"));
+            } else if rest.is_empty() {
+                return Err(malformed(at, "unterminated DTD internal subset"));
+            } else {
+                return Err(malformed(at, "unexpected content in DTD internal subset"));
+            }
+        }
     }
 
     fn processing_instruction(&mut self, start: usize) -> Result<(), ParseError> {
-        let end = self.find_from(start + 2, "?>", "processing instruction")? + 2;
-        let body = &self.src[start + 2..end - 2];
-        let target_len = body.find(|c: char| c.is_whitespace()).unwrap_or(body.len());
-        let target = &body[..target_len];
-        if target.is_empty() {
-            return Err(malformed(start, "processing instruction without a target"));
+        let close = self.find_from(start, start + 2, "?>", "processing instruction")?;
+        let end = close + 2;
+        let (target, target_end) = self.name_at(start + 2)?;
+        if target_end != close && !self.src[target_end..].starts_with(is_xml_space) {
+            return Err(malformed(target_end, "invalid character after the target"));
         }
         if target == "xml" {
             let first = self.top.is_empty()
@@ -232,6 +405,7 @@ impl<'a> Parser<'a> {
                     "the XML declaration must come first in the document",
                 ));
             }
+            self.declaration(target_end, close)?;
             self.emit(Node::Declaration(start..end));
         } else if target.eq_ignore_ascii_case("xml") {
             return Err(malformed(
@@ -244,30 +418,82 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// The name starting at `at`, and where it ends.
-    fn name_at(&self, at: usize) -> Result<(&'a str, usize), ParseError> {
-        let s = &self.src[at..];
-        let len = s
-            .find(|c: char| c.is_whitespace() || "/>=<\"'&?!".contains(c))
-            .unwrap_or(s.len());
-        let name = &s[..len];
-        match name.chars().next() {
-            None => Err(malformed(at, "expected a name")),
-            Some(c) if c.is_ascii_digit() || c == '-' || c == '.' => {
-                Err(malformed(at, format!("a name cannot start with {c:?}")))
-            }
-            Some(_) => Ok((name, at + len)),
-        }
-    }
-
-    fn skip_whitespace(&self, mut at: usize) -> usize {
-        while let Some(c) = self.src[at..].chars().next() {
-            if !c.is_whitespace() {
+    /// Check `version`, `encoding` and `standalone` in the declaration body
+    /// between `at` and `close` (the offset of `?>`).
+    fn declaration(&self, mut at: usize, close: usize) -> Result<(), ParseError> {
+        let mut seen: Vec<&str> = Vec::new();
+        loop {
+            let ws = self.skip_whitespace(at);
+            if ws >= close {
                 break;
             }
-            at += c.len_utf8();
+            if ws == at {
+                return Err(malformed(at, "expected whitespace in the XML declaration"));
+            }
+            let (name, name_end) = self.name_at(ws)?;
+            let eq = self.skip_whitespace(name_end);
+            if !self.src[eq..].starts_with('=') {
+                return Err(malformed(eq, "expected '=' in the XML declaration"));
+            }
+            let q = self.skip_whitespace(eq + 1);
+            let value_end = self.quoted_end(q)?;
+            let value = &self.src[q + 1..value_end - 1];
+            let order = ["version", "encoding", "standalone"];
+            let ok_order = match order.iter().position(|&n| n == name) {
+                None => return Err(malformed(ws, format!("unknown declaration field {name:?}"))),
+                Some(p) => seen
+                    .iter()
+                    .all(|s| order.iter().position(|n| n == s) < Some(p)),
+            };
+            if !ok_order || seen.contains(&name) {
+                return Err(malformed(ws, format!("{name} is out of order or repeated")));
+            }
+            match name {
+                "version" => {
+                    let digits = value.strip_prefix("1.").unwrap_or("");
+                    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+                        return Err(malformed(q + 1, format!("invalid version {value:?}")));
+                    }
+                }
+                "encoding" => {
+                    if !value.eq_ignore_ascii_case("UTF-8") {
+                        return Err(unsupported(
+                            q + 1,
+                            format!("declared encoding {value:?}; only UTF-8 is supported"),
+                        ));
+                    }
+                }
+                _ => {
+                    if value != "yes" && value != "no" {
+                        return Err(malformed(q + 1, format!("invalid standalone {value:?}")));
+                    }
+                }
+            }
+            seen.push(name);
+            at = value_end;
         }
-        at
+        if seen.first() != Some(&"version") {
+            return Err(malformed(at, "the XML declaration needs a version"));
+        }
+        Ok(())
+    }
+
+    /// The name starting at `at`, and where it ends. The character after
+    /// the name is not checked here; callers check what may follow.
+    fn name_at(&self, at: usize) -> Result<(&'a str, usize), ParseError> {
+        let s = &self.src[at..];
+        match s.chars().next() {
+            Some(c) if is_name_start(c) => {}
+            Some(c) => return Err(malformed(at, format!("a name cannot start with {c:?}"))),
+            None => return Err(malformed(at, "expected a name")),
+        }
+        let len = s.find(|c: char| !is_name_char(c)).unwrap_or(s.len());
+        Ok((&s[..len], at + len))
+    }
+
+    fn skip_whitespace(&self, at: usize) -> usize {
+        let s = &self.src[at..];
+        at + s.find(|c: char| !is_xml_space(c)).unwrap_or(s.len())
     }
 
     fn start_tag(&mut self, start: usize) -> Result<(), ParseError> {
@@ -287,8 +513,11 @@ impl<'a> Parser<'a> {
             if rest.is_empty() {
                 return Err(malformed(start, format!("unterminated start tag <{name}")));
             }
+            if rest.starts_with('/') {
+                return Err(malformed(after_ws, "expected '/>' or '>'"));
+            }
             if after_ws == at {
-                return Err(malformed(at, "expected whitespace before an attribute"));
+                return Err(malformed(at, "expected whitespace, '>' or '/>'"));
             }
             let attr = self.attribute(after_ws)?;
             if attributes.iter().any(|a| a.name == attr.name) {
@@ -422,7 +651,8 @@ fn decode(raw: &str, base: usize) -> Result<String, ParseError> {
     Ok(out)
 }
 
-/// `#123` or `#x7B` to its character; `None` for anything else.
+/// `#123` or `#x7B` to its character, if it is a legal XML character;
+/// `None` for anything else.
 fn char_reference(entity: &str) -> Option<char> {
     let digits = entity.strip_prefix('#')?;
     let value = match digits.strip_prefix('x') {
@@ -435,5 +665,5 @@ fn char_reference(entity: &str) -> Option<char> {
         }
         None => return None,
     };
-    char::from_u32(value).filter(|&c| c != '\0')
+    char::from_u32(value).filter(|&c| is_xml_char(c))
 }

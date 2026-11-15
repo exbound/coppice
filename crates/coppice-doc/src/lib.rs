@@ -1,6 +1,6 @@
 //! Behavior-tree documents: projects and tree XML in both dialects.
 //!
-//! Implements features F1 (parse tree XML) and F5 (lossless round-trip) of
+//! Implements F5 (lossless round-trip) and the parsing half of F1 of
 //! `docs/engineering-spec.md`, using the design in `docs/design-decisions.md`
 //! D3: a document keeps its original source, and every node of the parsed
 //! tree records the byte range it came from. Output is rebuilt from those
@@ -76,7 +76,10 @@ pub struct Attribute {
     /// The name as written.
     pub name: String,
     /// The value with entity and character references decoded
-    /// (`&amp;` becomes `&`, `&#x41;` becomes `A`).
+    /// (`&amp;` becomes `&`, `&#x41;` becomes `A`). Literal tabs and line
+    /// breaks are kept as written, not normalized to spaces as XML 1.0
+    /// §3.3.3 describes: BehaviorTree.CPP reads values unnormalized, and
+    /// coppice reports what that library would see.
     pub value: String,
     /// Where the name is, within the start tag.
     pub name_span: Span,
@@ -88,9 +91,12 @@ pub struct Attribute {
 }
 
 impl Document {
-    /// Parse a document. The input must be well-formed XML encoded as UTF-8
-    /// (a UTF-8 byte-order mark is allowed and kept). Exactly one top-level
-    /// element is required.
+    /// Parse a document. The input must be well-formed XML 1.0 encoded as
+    /// UTF-8 (a UTF-8 byte-order mark is allowed and kept). Exactly one
+    /// top-level element is required. A declared encoding other than UTF-8,
+    /// and a DTD internal subset that declares entities or uses
+    /// parameter-entity references, are refused as
+    /// [`ParseError::Unsupported`].
     pub fn parse(source: &[u8]) -> Result<Document, ParseError> {
         parse::parse(source)
     }

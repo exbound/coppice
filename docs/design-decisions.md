@@ -85,8 +85,9 @@ the official `flatbuffers` crate then.
 
 ## D7. Errors and diagnostics — Decided
 
-Library crates return typed errors that carry the offset or span and the
-bytes found. `Display` and `std::error::Error` are written by hand: a
+Library crates return typed errors that carry the byte offset (or span)
+of the problem and, where it helps, the names involved (an end tag's
+expected and found names, the open element's name). `Display` and `std::error::Error` are written by hand: a
 derive crate would bring a procedural-macro build dependency for a handful
 of variants. Diagnostics, meaning conditions the spec says to
 report without refusing (dialect mismatch, port-versus-model mismatch,

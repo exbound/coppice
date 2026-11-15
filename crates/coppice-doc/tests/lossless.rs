@@ -354,16 +354,92 @@ fn exactly_one_top_level_element_is_required() {
     );
 }
 
+/// Each rule the parser enforces, with the exact offset it reports.
 #[test]
-fn other_malformed_input_is_an_error_with_an_offset() {
-    for bad in [
-        &b"<root a=\"1></root>"[..],
-        b"<root>&undefined;</root>",
-        b"<root a='1' a='2'/>",
-    ] {
-        match Document::parse(bad) {
-            Err(ParseError::Malformed { offset, .. }) => assert!(offset <= bad.len()),
-            other => panic!("{:?}: {other:?}", String::from_utf8_lossy(bad)),
+fn each_wellformedness_rule_reports_its_exact_offset() {
+    enum K {
+        Malformed,
+        Unsupported,
+    }
+    use K::*;
+    let cases: &[(&[u8], K, usize)] = &[
+        (b"<root a=\"1></root>", Malformed, 8), // unterminated attribute value
+        (b"<root>&undefined;</root>", Malformed, 6), // undefined entity in text
+        (b"<root a='1' a='2'/>", Malformed, 12), // duplicate attribute
+        (b"<a>]]></a>", Malformed, 3),          // ]]> in text
+        (b"<a b=\"<\"/>", Malformed, 6),        // < in an attribute value
+        (b"<![CDATA[x]]><a/>", Malformed, 0),   // CDATA at top level
+        (b" <?xml version=\"1.0\"?><a/>", Malformed, 1), // late declaration
+        (b"<a b=\"1\"c=\"2\"/>", Malformed, 8), // no whitespace between attributes
+        (b"<a>&#0;</a>", Malformed, 3),         // NUL by reference
+        (b"<a>&#1;</a>", Malformed, 3),         // control character by reference
+        (b"<a>&#xFFFE;</a>", Malformed, 3),     // non-character by reference
+        (b"<a>\x01</a>", Malformed, 3),         // control character literally
+        (b"<a/>x", Malformed, 4),               // text outside the top-level element
+        (b"<?XmL x?><a/>", Malformed, 0),       // reserved PI target
+        ("<a\u{A0}b=\"1\"/>".as_bytes(), Malformed, 2), // non-XML whitespace
+        (b"<a;b/>", Malformed, 2),              // invalid name character
+        ("<\u{300}a/>".as_bytes(), Malformed, 1), // combining mark cannot start a name
+        (b"<a/ >", Malformed, 2),               // '/' not followed by '>'
+        (b"<a><!-- a -- b --></a>", Malformed, 10), // -- inside a comment
+        (b"<a><!-- x ---></a>", Malformed, 10), // comment ending --->
+        (b"<a/><!DOCTYPE a>", Malformed, 4),    // DOCTYPE after the element
+        (b"<!DOCTYPE a><!DOCTYPE b><a/>", Malformed, 12), // second DOCTYPE
+        (b"<!DOCTYPE><a/>", Malformed, 9),      // DOCTYPE without a name
+        (b"<!DOCTYPE a [ ] junk ><a/>", Malformed, 16), // junk after the subset
+        (b"<?xml?><a/>", Malformed, 5),         // declaration without version
+        (b"<?xml version=\"9.9\"?><a/>", Malformed, 15), // invalid version
+        (
+            b"<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>",
+            Unsupported,
+            30,
+        ),
+        (
+            b"<!DOCTYPE a [<!ENTITY e \"x\">]><a>&e;</a>",
+            Unsupported,
+            13,
+        ),
+    ];
+    for (input, kind, want) in cases {
+        let shown = String::from_utf8_lossy(input);
+        match (Document::parse(input), kind) {
+            (Err(ParseError::Malformed { offset, .. }), Malformed)
+            | (Err(ParseError::Unsupported { offset, .. }), Unsupported) => {
+                assert_eq!(offset, *want, "{shown:?}")
+            }
+            (other, _) => panic!("{shown:?}: {other:?}"),
+        }
+    }
+}
+
+/// Well-formed inputs the parser must accept, and round-trip exactly.
+#[test]
+fn wellformed_edge_cases_are_accepted_and_round_trip() {
+    let cases: &[&str] = &[
+        "<!DOCTYPE a [<!ELEMENT a (#PCDATA)>]><a/>",
+        "<!DOCTYPE a SYSTEM \"x[y.dtd\"><a/>",
+        "<!DOCTYPE a [<!-- ] -->]><a/>",
+        "<!DOCTYPE a [<!ATTLIST a b CDATA \"]>\">]><a/>",
+        "<!DOCTYPE a PUBLIC \"p\" 's'><a/>",
+        "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?><a/>",
+        "<?xml-stylesheet href=\"x\"?><a/>",
+        "<:a/>",
+        "<a-b.c_d:e/>",
+        "<été/>",
+        "<文/>",
+        "<a><!-- > --></a>",
+        "<a><?pi > x?></a>",
+        "<a><![CDATA[ ]] ]]></a>",
+        "<a>&#x10FFFF;&#9;</a>",
+        "<a\r\n\tb\r\n=\r\n'1'\r\n/>",
+        "<a></a \r\n>",
+    ];
+    for input in cases {
+        let doc = Document::parse(input.as_bytes()).unwrap_or_else(|e| panic!("{input:?}: {e}"));
+        assert_eq!(doc.render(), *input);
+        check_contiguous(input, "document", 0, doc.nodes(), input.len());
+        for n in doc.nodes() {
+            check_node(input, &doc, n);
         }
     }
 }
