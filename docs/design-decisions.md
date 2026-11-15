@@ -32,7 +32,7 @@ them; they never depend on it. Protocol-specific types stay inside
 subtrees, ports, models), never a generic node-and-edge graph, so that a GUI
 library's graph type cannot become the data model.
 
-## D3. Lossless XML: keep the source, splice edits — Decided
+## D3. Two writers: lossless from the source, reference from the model — Decided
 
 No Rust XML library we found writes a document back byte for byte from its
 model. Readers can report source positions (`quick-xml`'s byte offsets,
@@ -57,6 +57,12 @@ document is reproduced exactly. F5 requires exact bytes, so:
 - Later editing (L3) uses the same rule: re-emit only the regions an edit
   touches, in the document's own detected style (indentation, quote
   character, line ending).
+- **The reference writer is a separate serializer.** The reference
+  application rewrites every file into one canonical style (spec §3.2,
+  §3.3), so its output cannot come from splicing the source. A second
+  writer serializes the document model in that style. The two never mix:
+  lossless output never reformats, and reference output never carries
+  source formatting.
 - Encoding: UTF-8 as required by the formats. Other declared encodings are
   refused with a clear error until a fixture requires them.
 
@@ -121,6 +127,9 @@ deliberate change of its own.
 ## D10. Command-line surface — Provisional
 
 Verbs map one-to-one onto features, so each is testable on its own:
-`check` (parse and diagnostics), `save` (reference save; `--lossless` for
-F5 with no stamp), `save-as`, `log dump`, `log write`, `monitor` (a terminal
-view), `record`. Output is plain text by default, with `--json` for scripts.
+`check` (parse and diagnostics), `save` and `save-as` (lossless by default;
+`--reference` for the reference application's canonical output, which for
+a project is an export to a directory), `log dump`, `log write`, `monitor`
+(a terminal view), `record`. Lossless is the default by the operator's
+decision of 2026-11-15: a user's comments and formatting are never lost
+unless they ask for reference output. Output is plain text by default, with `--json` for scripts.
