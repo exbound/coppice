@@ -1,27 +1,30 @@
-# Exbound implementation repo — standard command interface.
-# Wire each recipe to this repo's toolchain; keep the names and meanings so the
-# org conventions and CI stay uniform across implementations.
+# coppice — standard command interface (Exbound convention).
+# The Rust toolchain version is pinned in rust-toolchain.toml.
 
 # List available recipes
 default:
     @just --list
 
-# Install dependencies
+# Install the pinned Rust toolchain and its components (needs rustup >= 1.28)
 setup:
-    @echo "TODO: install dependencies for this repo's toolchain"
+    rustup toolchain install
 
 # Format sources in place
 fmt:
-    @echo "TODO: run this repo's formatter"
+    cargo fmt --all
 
-# Lint
-lint:
-    @echo "TODO: run this repo's linter"
+# Lint, with warnings as errors
+lint: lints-opted-in
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+
+# Fail if any crate does not take the workspace lints
+lints-opted-in:
+    @for f in crates/*/Cargo.toml; do awk '/^\[lints\]/{s=1;next} /^\[/{s=0} s && /^workspace *= *true/{ok=1} END{exit !ok}' "$f" || { echo "$f: missing '[lints] workspace = true'" >&2; exit 1; }; done
 
 # Format-check + lint + typecheck — the CI equivalent
-check:
-    @echo "TODO: fmt-check + lint + typecheck"
+check: && lint
+    cargo fmt --all --check
 
 # Run the test suite
 test:
-    @echo "TODO: run this repo's tests"
+    cargo test --workspace --locked

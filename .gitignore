@@ -19,3 +19,6 @@ Thumbs.db
 # Local test fixtures that must not be committed (vendor binaries / samples).
 # Keep the ignore broad; commit only fixtures whose provenance is recorded.
 tests/fixtures/_local/
+
+# Rust build output
+/target/

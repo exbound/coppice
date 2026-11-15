@@ -130,7 +130,9 @@ thin, language-agnostic surface; each repo wires them to its own toolchain:
 docs/engineering-spec.md   the clean-room functional spec this code implements
 docs/setup.md              contributor toolchain setup (kept separate from the
                            research diary, so requirements need not be inferred)
-src/                       implementation
-tests/                     tests and fixtures (see tests/fixtures/README.md)
+crates/                    implementation: a Rust workspace (see docs/design-decisions.md D2)
+tests/fixtures/            shared fixtures (see tests/fixtures/README.md); each crate's
+                           tests live in crates/<crate>/tests/
+tests/harness/             the BehaviorTree.CPP test harness (design decision D8; not yet built)
 .github/workflows/ci.yml   runs `just check` and `just test`
 ```

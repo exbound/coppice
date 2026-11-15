@@ -13,7 +13,11 @@ with explicit integer types and no runtime. The core must be usable without
 a window system: from the command line, from tests, and later from a GUI
 crate.
 
-## D2. Workspace layout — Provisional (first code change confirms it)
+## D2. Workspace layout — Decided
+
+The layout below is decided. `coppice-doc` and `coppice-cli` exist; the
+other two crates arrive with their first feature, so the workspace never
+carries an empty crate with nothing to test.
 
 ```
 crates/coppice-doc      documents: parse, model, save (F1–F10)
@@ -94,8 +98,14 @@ error. The CLI uses `anyhow` at its top level only.
 ## D9. Dependency hygiene — Decided
 
 `cargo-deny` in `just check`, with an allow-list of licenses compatible with
-Apache-2.0 distribution. Every dependency is pinned by `Cargo.lock`, which is
-committed.
+Apache-2.0 distribution. It joins the gate with the first third-party
+dependency; until then there is nothing for it to check. Every dependency is
+pinned by `Cargo.lock`, which is committed, and every cargo build in the gate
+(`clippy`, `test`) runs with `--locked`.
+
+The Rust toolchain is pinned exactly in `rust-toolchain.toml`, so CI and
+local builds use the same compiler and the same lints. Moving it is a
+deliberate change of its own.
 
 ## D10. Command-line surface — Provisional
 

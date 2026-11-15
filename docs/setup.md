@@ -1,18 +1,26 @@
-<!--
-  Contributor setup guide. Kept separate from the research dossier so a
-  contributor need not infer requirements from a research diary. Replace the
-  bracketed fields with this repo's actual toolchain and delete this comment.
--->
-
 # Setup
 
-Toolchain prerequisites and the local development loop for this repository.
+Toolchain prerequisites and the local development loop for coppice.
 
 ## Prerequisites
 
-- [language + version, e.g. "Python 3.12" or "a C++20 compiler + CMake 3.25"]
-- [`just`](https://github.com/casey/just) for the task recipes
-- [other tools: linter, formatter, test runner]
+- [`rustup`](https://rustup.rs) **1.28 or newer**: `just setup` relies on
+  `rustup toolchain install` reading `rust-toolchain.toml`, which older
+  versions do not do (some distribution packages are older; install rustup
+  from rustup.rs if yours is). The Rust version is pinned in
+  `rust-toolchain.toml` (currently 1.98.1, with `rustfmt` and `clippy`), and
+  rustup selects it automatically inside this repository.
+- A **C linker**, which Rust needs to link the binary and the tests:
+  `build-essential` on Debian/Ubuntu, the Xcode command-line tools on macOS,
+  the MSVC build tools on Windows. Without one, `just test` fails with a
+  "linker not found" error. (`just check` currently passes without one,
+  because nothing it builds is linked; that stops being true once a
+  dependency with a build script arrives.)
+- [`just`](https://github.com/casey/just) for the task recipes.
+
+No other system libraries are needed yet. The live-monitor crate will add
+libzmq, and the test harness will add a C++ compiler and CMake to build
+BehaviorTree.CPP; this file will say so when they do.
 
 ## First-time setup
 
@@ -20,20 +28,31 @@ Toolchain prerequisites and the local development loop for this repository.
 just setup
 ```
 
-[What `just setup` does here — create a virtualenv, configure the build, fetch
-test fixtures, etc.]
+This installs the pinned toolchain and its components through rustup. In a
+sandboxed agent session that cannot write `~/.rustup`, a person runs it once,
+outside the sandbox.
 
 ## Development loop
 
 ```sh
 just fmt      # format
-just check    # format-check + lint + typecheck (CI equivalent)
-just test     # run the test suite
+just check    # rustfmt --check, the lint opt-in check, then clippy with warnings as errors (CI equivalent)
+just test     # cargo test across the workspace
 ```
 
 Run `just check && just test` before every commit; CI runs the same.
+`cargo clippy` and `cargo test` run with `--locked`, so a change to
+dependencies must include the updated `Cargo.lock`.
+
+Every crate under `crates/` must take the workspace lints, spelled exactly
+as a `[lints]` table header followed by a `workspace = true` line in its
+`Cargo.toml` (other TOML spellings that cargo accepts are rejected by the
+check). `just check` fails on a crate that
+does not, because otherwise it would silently skip the workspace-wide
+`unsafe_code = "forbid"`.
 
 ## Test fixtures
 
-[How fixtures are obtained. Do not commit vendor binaries or vendor-copyrighted
-sample files — see `tests/fixtures/README.md`.]
+Fixtures are self-authored or openly licensed, with provenance recorded in
+`tests/fixtures/README.md`. Vendor sample files are never committed. See
+`docs/engineering-spec.md` §8 for what each feature is tested against.
