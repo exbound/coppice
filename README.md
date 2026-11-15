@@ -21,10 +21,11 @@ for the C1–C9 capability model and the target dossiers.
 
 ## Status
 
-No code yet. The enumerated feature set, and each feature's coverage triplet
-(reference observed / implemented / verified), arrives with
-[`docs/engineering-spec.md`](docs/engineering-spec.md). Until then the status
-is **sketch**.
+The enumerated feature set (F1–F16) and each feature's coverage triplet
+(reference observed / implemented / verified) are in
+[`docs/engineering-spec.md`](docs/engineering-spec.md) §1. No feature is
+implemented yet: the Rust workspace and its gate are in place, and the
+`coppice` binary answers only `--version`.
 
 ## Build and test
 
@@ -32,9 +33,9 @@ This repo follows the Exbound `just` convention. See
 [`docs/setup.md`](docs/setup.md) for toolchain prerequisites.
 
 ```sh
-just setup   # install dependencies
-just check   # format-check + lint + typecheck (CI equivalent)
-just test    # run the test suite
+just setup   # install the pinned Rust toolchain (rustup >= 1.28)
+just check   # rustfmt check + clippy, warnings as errors (CI equivalent)
+just test    # cargo test across the workspace
 ```
 
 ## Compatibility and boundaries

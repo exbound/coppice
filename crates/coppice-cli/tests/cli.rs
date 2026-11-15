@@ -24,3 +24,17 @@ fn unknown_arguments_are_a_usage_error() {
     assert!(out.stdout.is_empty());
     assert!(String::from_utf8(out.stderr).unwrap().starts_with("usage:"));
 }
+
+#[test]
+fn short_version_flag_matches_long() {
+    assert_eq!(coppice(&["-V"]).stdout, coppice(&["--version"]).stdout);
+}
+
+#[test]
+fn no_arguments_and_extra_arguments_are_usage_errors() {
+    for args in [&[][..], &["--version", "extra"][..]] {
+        let out = coppice(args);
+        assert_eq!(out.status.code(), Some(2), "args: {args:?}");
+        assert!(out.stdout.is_empty(), "args: {args:?}");
+    }
+}

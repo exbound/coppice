@@ -5,7 +5,7 @@
 default:
     @just --list
 
-# Install the pinned Rust toolchain and its components
+# Install the pinned Rust toolchain and its components (needs rustup >= 1.28)
 setup:
     rustup toolchain install
 
@@ -14,13 +14,16 @@ fmt:
     cargo fmt --all
 
 # Lint, with warnings as errors
-lint:
+lint: lints-opted-in
     cargo clippy --workspace --all-targets --locked -- -D warnings
 
+# Fail if any crate does not take the workspace lints
+lints-opted-in:
+    @for f in crates/*/Cargo.toml; do awk '/^\[lints\]/{s=1;next} /^\[/{s=0} s && /^workspace *= *true/{ok=1} END{exit !ok}' "$f" || { echo "$f: missing '[lints] workspace = true'" >&2; exit 1; }; done
+
 # Format-check + lint + typecheck — the CI equivalent
-check:
+check: && lint
     cargo fmt --all --check
-    just lint
 
 # Run the test suite
 test:
