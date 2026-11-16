@@ -61,7 +61,7 @@ list.
 | F7 | Reference save in V3 mode | C3 | yes (answers O-12: the V4 writer, no stamp) | none | none | §3.5 |
 | F8 | Reference project export | C3 | partial: the project file's layout, models, stamp and include order (answers O-1, O-2, O-4, O-6, O-11, O-14, O-16); which tree files are written and how include paths are rewritten differs between the two recorded sessions (O-18) | none | none | §3.3 |
 | F9 | Reference save-as of a standalone tree: a bare canonical tree | C3 | yes (answers O-5, O-13) | none | none | §3.4 |
-| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Across a project (F3, §2.3.1): nodes checked against the project's merged models, plus include problems, replaced trees, an unknown main tree and subtrees that name no tree. Not yet on logs or the monitor tree | partial — the first set's F10 reference fixtures (the leaf-with-child trees) and inline inputs; the second set's leaf-with-child inputs; its two unknown-port inputs (a built-in `Script` attribute) wait on the built-in port lists (§3.6) | §2.5, §3.6 |
+| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Across a project (F3, §2.3.1): nodes checked against the project's merged models, plus include problems, replaced trees, an unknown main tree and subtrees that name no tree. Not yet on logs or the monitor tree | partial — the first set's F10 reference fixtures (the leaf-with-child trees) and inline inputs; the second set's leaf-with-child inputs; its two unknown-port inputs (a built-in `Script` attribute) wait on the built-in port lists, taken from the library source (§3.2 rule 6, §3.6) | §2.5, §3.6 |
 | F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | none | none | §4.1 |
 | F12 | Write `.btlog` | C2 | yes (surface §1) | none | none | §4.2 |
 | F13 | Monitor client: connect, FULLTREE, STATUS polling, heartbeat | C6 | yes (surface §2, dossier G-4/G-5) | none | none | §5.1–5.4 |
@@ -342,11 +342,11 @@ V3 mode too (§3.5). Fixture paths in this section are under
    character (answers O-9, O-13; fixtures `in-o9-awkward/charrefs-rt.xml`,
    `o-answers-2/out-o13/attr-escapes.xml`). **All source comments are
    dropped**; only the comment in rule 4 is written (answers O-9).
-6. **Attribute set and order on a node.** A node of a model is written
-   with `name` first when it has one (a missing `name` is not added:
-   fixture `o-answers-2/out-o14/tree.xml`), then **every port of its
-   model, in the model's declaration order**, whatever subset the source
-   set. A port the source did not set is written with an empty value
+6. **Attribute set and order on a node.** A node of a **declared**
+   model is written with `name` first when it has one (a missing `name`
+   is not added: fixture `o-answers-2/out-o14/tree.xml`), then **every
+   port of its model, in the model's declaration order**, whatever subset
+   the source set. A port the source did not set is written with an empty value
    (`x=""`) (answers O-10, `o-answers-2/out-o10/tree.xml`). The
    empty-port emission is a setting of the reference, recorded as
    configured; coppice takes it as a setting with that default.
@@ -371,7 +371,8 @@ V3 mode too (§3.5). Fixture paths in this section are under
      written with their `ID` first and nothing added: the one fixture,
      a V3-mode save, writes `<SubTree ID="Side"/>` with no `_autoremap`,
      though the v4 library declares that port (BT 4.9.0
-     `src/decorators/subtree_node.cpp:17`). Remapping attributes and
+     `src/decorators/subtree_node.cpp:17`). For V4 this is a
+     **HYPOTHESIS**. Where `name` goes, remapping attributes, and
      `_autoremap` set in the source are not covered (§7, O-17).
    - Other attributes that are neither `name` nor a port (`ID` on the
      explicit `<Action ID="…">` form, `_skipIf` and the other reserved
@@ -392,9 +393,11 @@ V3 mode too (§3.5). Fixture paths in this section are under
    `unused.xml`; consistent with `out-o6/tree.xml`, the `out-o2-*` trees
    and `in-o9-awkward/comments-rt.xml`). A model is used when a node's
    element name equals its `ID`. The models come from the project's
-   merged list when the tree is saved through a project (§2.3.1; in
-   `o-answers-2/out-o10/`, `out-o12/` and `out-o14/` the models are
-   declared in the `.btproj`, not the tree file), and from the file's
+   merged list when the tree is saved through a project (§2.3.1; the
+   models in `o-answers-2/out-o10/tree.xml` and `out-o14/tree.xml` are
+   declared in the project files `o-answers-2/out-o10-corrected/proj.btproj`
+   and `o-answers-2/in-o14-models/proj.btproj`, not in the tree file),
+   plus, in V3 mode, the importer's models (§3.5); and from the file's
    own blocks when it is saved on its own (§3.4). The explicit
    `<Action ID="…"/>` form and subtree models are not covered by the
    fixtures, so for them the rule is a **HYPOTHESIS**.
@@ -532,7 +535,8 @@ node with one attribute; that the defaults are the same for other nodes
 (another kind, several attributes, several uses with different
 attributes) is a **HYPOTHESIS** (§7, O-17). Which node types V3 mode
 treats as built-in is not in the record, beyond `Script` not being one
-and `SetBlackboard` and `SubTree` getting no model (§7, O-17). In V4 mode, the
+and `Sequence`, `SetBlackboard` and `SubTree` getting no model
+(`o-answers-2/out-o12/tree.xml`; §7, O-17). In V4 mode, the
 reference's behavior for an undeclared custom node is not in the record,
 so coppice refuses that reference save with a diagnostic naming the
 node. Fresh V3 saves (dossier G-5) are L3.
@@ -564,8 +568,10 @@ diagnostic: `LeafWithChildren`, `UnknownPort` and `ModelShadowsBuiltin`.
 Today `UnknownPort` covers declared models only, and
 `ModelShadowsBuiltin` fires only on a leafness mismatch (§2.5). Reporting
 an unknown port on a built-in, and a declaration whose ports differ from
-the built-in's, needs the built-in port lists (§3.2 rule 6) and comes
-with F6. A reference-mode save of any input the reference refuses is
+the built-in's, needs the built-in port lists. coppice takes them from
+the library source (for `Script`, BT 4.9.0
+`include/behaviortree_cpp/actions/script_node.h:46`: `code` only), and
+that comes with F6. A reference-mode save of any input the reference refuses is
 refused.
 
 ## 4. Recordings — `.btlog` (F11, F12)
