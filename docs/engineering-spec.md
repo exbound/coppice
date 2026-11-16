@@ -61,7 +61,7 @@ list.
 | F7 | Reference save in V3 mode | C3 | yes (answers O-12: the V4 writer, no stamp) | none | none | §3.5 |
 | F8 | Reference project export | C3 | partial: the project file's layout, models, stamp and include order (answers O-1, O-2, O-4, O-6, O-11, O-14, O-16); which tree files are written and how include paths are rewritten differs between the two recorded sessions (O-18) | none | none | §3.3 |
 | F9 | Reference save-as of a standalone tree: a bare canonical tree | C3 | yes (answers O-5, O-13) | none | none | §3.4 |
-| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Across a project (F3, §2.3.1): nodes checked against the project's merged models, plus include problems, replaced trees, an unknown main tree and subtrees that name no tree. Not yet on logs or the monitor tree | partial — the first set's F10 reference fixtures (the leaf-with-child trees) and inline inputs; the second set's (§8) wait on the built-in port lists (§3.6) | §2.5, §3.6 |
+| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Across a project (F3, §2.3.1): nodes checked against the project's merged models, plus include problems, replaced trees, an unknown main tree and subtrees that name no tree. Not yet on logs or the monitor tree | partial — the first set's F10 reference fixtures (the leaf-with-child trees) and inline inputs; the second set's leaf-with-child inputs; its two unknown-port inputs (a built-in `Script` attribute) wait on the built-in port lists (§3.6) | §2.5, §3.6 |
 | F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | none | none | §4.1 |
 | F12 | Write `.btlog` | C2 | yes (surface §1) | none | none | §4.2 |
 | F13 | Monitor client: connect, FULLTREE, STATUS polling, heartbeat | C6 | yes (surface §2, dossier G-4/G-5) | none | none | §5.1–5.4 |
@@ -342,35 +342,40 @@ V3 mode too (§3.5). Fixture paths in this section are under
    character (answers O-9, O-13; fixtures `in-o9-awkward/charrefs-rt.xml`,
    `o-answers-2/out-o13/attr-escapes.xml`). **All source comments are
    dropped**; only the comment in rule 4 is written (answers O-9).
-6. **Attribute set and order on a node.** A node is written with `name`
-   first when it has one (a missing `name` is not added: fixture
-   `o-answers-2/out-o14/tree.xml`), then **every port of its model, in
-   the model's declaration order**, whatever subset the source had. The
-   reordering is shown for the built-in `SetBlackboard` (below); no input
-   puts `name` after another attribute, or sets a declared model's ports
-   out of order, so for those cases the order is a **HYPOTHESIS**. A port the source did not set is written with an empty value
-   (`x=""`) (answers O-10, `o-answers-2/out-o10/tree.xml`; answers O-12,
-   `o-answers-2/out-o12/tree.xml`: `<SetBlackboard output_key="k"
-   value="1"/>` is written `value` first). The empty-port emission is a
-   setting of the reference, recorded as configured; coppice takes it as
-   a setting with that default.
-   - For a **declared** model, the order is the model entry's port order.
-   - For a **built-in** node, the library declares its ports in an
+6. **Attribute set and order on a node.** A node of a model is written
+   with `name` first when it has one (a missing `name` is not added:
+   fixture `o-answers-2/out-o14/tree.xml`), then **every port of its
+   model, in the model's declaration order**, whatever subset the source
+   set. A port the source did not set is written with an empty value
+   (`x=""`) (answers O-10, `o-answers-2/out-o10/tree.xml`). The
+   empty-port emission is a setting of the reference, recorded as
+   configured; coppice takes it as a setting with that default.
+   - **Declared models:** the order is the model entry's port order.
+     Every input sets its ports already in that order and has `name`
+     first, so reordering a declared model's ports, and moving `name`
+     to the front, are a **HYPOTHESIS** (§7, O-17).
+   - **Built-in nodes:** the library declares their ports in an
      unordered container (BT 4.9.0
      `include/behaviortree_cpp/basic_types.h:599`, `PortsList`), so it
-     gives no order. The one multi-port built-in in
-     the fixtures, `SetBlackboard`, is written in the order its ports
-     appear in the library source (BT 4.9.0
-     `include/behaviortree_cpp/actions/set_blackboard_node.h:45-50`).
-     That this holds for every built-in, and whether a built-in's unset
-     ports are written empty, is a **HYPOTHESIS** (§7, O-17). The only
-     `SubTree` in the fixtures is from a V3-mode save
-     (`o-answers-2/out-o12/tree.xml`): written with its `ID` and without
-     the v4 library's `_autoremap` port (BT 4.9.0
-     `src/decorators/subtree_node.cpp:17`), which says little about V4.
-   - Attributes that are neither `name` nor a port (`ID` on the explicit
-     `<Action ID="…">` form, `_skipIf` and the other reserved
-     attributes, subtree remappings) are not covered (§7, O-17).
+     gives no order. The one multi-port built-in in the fixtures,
+     `SetBlackboard`, was reordered to the order its ports appear in the
+     library source (BT 4.9.0
+     `include/behaviortree_cpp/actions/set_blackboard_node.h:45-50`):
+     `<SetBlackboard output_key="k" value="1"/>` was written `value`
+     first (answers O-12, `o-answers-2/out-o12/tree.xml`). That save was
+     in V3 mode. coppice writes built-in ports in their library source
+     order and writes only the ports the source set; both are a
+     **HYPOTHESIS** for V4, and for built-ins other than `SetBlackboard`
+     (§7, O-17).
+   - **Subtree nodes** (`<SubTree>`, and `<SubTreePlus>` in v3) are
+     written with their `ID` first and nothing added: the one fixture,
+     a V3-mode save, writes `<SubTree ID="Side"/>` with no `_autoremap`,
+     though the v4 library declares that port (BT 4.9.0
+     `src/decorators/subtree_node.cpp:17`). Remapping attributes and
+     `_autoremap` set in the source are not covered (§7, O-17).
+   - Other attributes that are neither `name` nor a port (`ID` on the
+     explicit `<Action ID="…">` form, `_skipIf` and the other reserved
+     attributes) are not covered (§7, O-17).
 7. **Attribute wrapping.** In tree files, a tag with **two or more
    attributes** is written one attribute per line: the first on the
    tag's line, each further one on its own continuation line indented to
@@ -386,14 +391,23 @@ V3 mode too (§3.5). Fixture paths in this section are under
    when it uses none (answers O-14, `o-answers-2/out-o14/tree.xml` and
    `unused.xml`; consistent with `out-o6/tree.xml`, the `out-o2-*` trees
    and `in-o9-awkward/comments-rt.xml`). A model is used when a node's
-   element name equals its `ID`. The explicit `<Action ID="…"/>` form
-   and subtree models are not covered by the fixtures, so for them the
-   rule is a **HYPOTHESIS**.
+   element name equals its `ID`. The models come from the project's
+   merged list when the tree is saved through a project (§2.3.1; in
+   `o-answers-2/out-o10/`, `out-o12/` and `out-o14/` the models are
+   declared in the `.btproj`, not the tree file), and from the file's
+   own blocks when it is saved on its own (§3.4). The explicit
+   `<Action ID="…"/>` form and subtree models are not covered by the
+   fixtures, so for them the rule is a **HYPOTHESIS**.
 9. **The model block's layout** (answers O-6, O-10, O-12): entries
-   sorted alphabetically by `ID`; each entry is
-   `<Kind ID="…" [editable="true"]>` with its ports as children, in
-   declaration order, each `<input_port|output_port|inout_port
-   name="…" [type="…"]/>`; `<description>` is dropped; an entry with no
+   sorted by `ID` (every fixture `ID` is capitalized ASCII, so byte order
+   and case-insensitive order agree; coppice uses byte order, a
+   **HYPOTHESIS**); each entry is `<Kind ID="…" [editable="true"]>` with
+   its ports as children, in declaration order, each
+   `<input_port|output_port|inout_port name="…" [type="…"]/>`, where
+   `editable` and `type` are written when the declaration has them
+   (`o-answers-2/out-o10/tree.xml`: no `editable`;
+   `o-answers-2/out-o14/tree.xml`: `editable="true"`);
+   `<description>` is dropped; an entry with no
    ports is self-closing. Rules 3 and 7 apply (fixtures `out-o6/tree.xml`,
    `o-answers-2/out-o10/tree.xml`, `o-answers-2/out-o12/tree.xml`). The
    placement of a port's `default` attribute and of its description text
@@ -774,7 +788,7 @@ public research record before it enters this spec (see `clean-room.md`).
 | O-10 to O-16 | answered (`dossiers/groot2-o-answers-2.md`), with the remainders split out below | — | — |
 | O-3 | V3 TreeNodesModel rule: which models are embedded on a fresh save and which are dropped | L3 (not v1) | input/output pairs covering built-in, declared-custom and included models |
 | O-7 | The reference's reconnect back-off after a publisher restart | F13 | a timing description; non-blocking (coppice's own policy stands) |
-| O-17 | Writer cases the fixtures do not cover: (a) which ports of a **built-in** node are written, in what order, and whether unset ones are written empty (e.g. `Sleep`, `Repeat`, `RetryUntilSuccessful`, `SubTree` with and without `_autoremap`); (b) attributes that are neither `name` nor a port: `ID` on the explicit `<Action ID="…">` form, `_skipIf` and the other reserved attributes, subtree remappings; (c) root attributes other than the format, version and project name, such as `main_tree_to_execute`; (d) `<include>` in a tree file; (e) a port's `default` attribute and description text in the written model block; (f) model selection for the explicit form and for subtree models; (g) whether a tag with one long attribute value wraps; (h) the V3-mode model importer's defaults beyond one node with one attribute, and which node types V3 mode treats as built-in; (i) whether a declared model that agrees with a built-in is refused | F6, F7, F9 | one saved input per case |
+| O-17 | Writer cases the fixtures do not cover: (a) which ports of a **built-in** node are written, in what order, and whether unset ones are written empty (e.g. `Sleep`, `Repeat`, `RetryUntilSuccessful`, `SubTree` with and without `_autoremap`); (b) attributes that are neither `name` nor a port: `ID` on the explicit `<Action ID="…">` form, `_skipIf` and the other reserved attributes, subtree remappings; (c) root attributes other than the format, version and project name, such as `main_tree_to_execute`; (d) `<include>` in a tree file; (e) a port's `default` attribute and description text in the written model block; (f) model selection for the explicit form and for subtree models; (g) whether a tag with one long attribute value wraps; (h) the V3-mode model importer's defaults beyond one node with one attribute, and which node types V3 mode treats as built-in; (i) whether a declared model that agrees with a built-in is refused; (j) a V4 save of a node whose declared model's ports, or `name`, are set out of order in the source; (k) whether the reference refuses an attribute that is not a port of a **declared** model; (l) the model block's sort key for IDs differing in case | F6, F7, F9 | one saved input per case |
 | O-18 | Project export: which tree files are written to the destination, and how include paths are rewritten. The two recorded sessions differ (copy and flatten in O-2, O-4 and O-6; project file only, includes repointed, in O-11/12/14/16); the candidate variables are the export dialog's per-row selection, whether the trees were opened or modified before the export, and the dialog's pre-filled destination | F8 | the same project exported with its rows selected and not selected |
 
 ## 8. Compatibility oracle
@@ -810,8 +824,9 @@ committed.
    | F6 | `o-answers-2/in-o14-models/` | per-file save of each tree | `o-answers-2/out-o14/tree.xml`, `o-answers-2/out-o14/unused.xml` |
    | F6 | `o-answers-2/in-o16-stamps/proj-stamp.btproj` (its `stamped.xml` carries an older stamp; target kept) | per-file save of each tree | `o-answers-2/out-o16b/stamped.xml`, `o-answers-2/out-o16b/ordered.xml` |
    | F6 | `o-answers-2/in-o16-stamps/proj-411.btproj` (a newer stamp; target switched to 4.11) | per-file save | `o-answers-2/out-o16a/t411.xml` |
-   | F7 | `o-answers-2/in-o12-v3/` (V3 mode; the project includes `tree.xml`, and the importer's model for `Script` is created as §3.5 states) | per-file save | `o-answers-2/out-o12/tree.xml` (`o-answers-2/out-o12/tree-crlf.xml` is byte-identical, but the record does not show how the CRLF input reached a save, so it is not an oracle row) |
-   | F8 | `o-answers-2/in-o14-models/`, `o-answers-2/in-o16-stamps/`, `o-answers-2/in-o12-v3/` (V3), `o-answers-2/out-o11-corrected/` | project export, project-file-only behavior (O-18) | `o-answers-2/out-o14-export/`, `o-answers-2/out-o16a/proj.btproj`, `o-answers-2/out-o16b-export/`, `o-answers-2/out-o12-export/proj.btproj`, `o-answers-2/out-o11/proj.btproj` |
+   | F7 | `o-answers-2/in-o12-v3/` (V3 mode; the project includes `tree.xml`, and the importer's model for `Script` is created as §3.5 states) | save of the tree (the export's include, `../out-o12/tree-crlf.xml`, suggests the tree was last saved under a new name; the bytes are the same either way) | `o-answers-2/out-o12/tree.xml` (`o-answers-2/out-o12/tree-crlf.xml` is byte-identical, but the record does not show how the CRLF input reached a save, so it is not an oracle row) |
+   | F8 | `o-answers-2/in-o14-models/`, `o-answers-2/in-o16-stamps/proj-stamp.btproj`, `o-answers-2/in-o12-v3/` (V3), `o-answers-2/out-o11-corrected/` (target 4.10) | project export, project-file-only behavior (O-18) | `o-answers-2/out-o14-export/`, `o-answers-2/out-o16b-export/`, `o-answers-2/out-o12-export/proj.btproj`, `o-answers-2/out-o11/proj.btproj` |
+   | F8 | `o-answers-2/in-o16-stamps/proj-411.btproj` (target switched to 4.11) | project export, project-file-only behavior (O-18) | `o-answers-2/out-o16a/proj.btproj` |
    | F9 | `o-answers-2/in-o13-escape/content.xml`, `two-trees-tab.xml`; `o-answers-2/out-o13-corrected/attr-escapes.xml`, `mixed-forms.xml`, `two-trees-blank.xml` | standalone save-as | the same names under `o-answers-2/out-o13/` |
    | F9 | `in-o5-single.xml` | standalone save-as | `out-o5/in-o5-single.xml` |
    | F9 | each `in-o9-awkward/<name>.xml` | standalone save-as | `in-o9-awkward/<name>-rt.xml` |
