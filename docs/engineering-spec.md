@@ -216,9 +216,14 @@ decides:
   document in load order (the starting file, then each include depth-first
   in source order), and checks every tree against the merged list
   (`LeafWithChildren`, `UnknownPort`, §2.5). An `ID` declared again in a
-  later document is reported there (`DuplicateModel`), and the first
-  declaration is used. How the reference merges models across a project's
-  files is not in the record; this choice is coppice's.
+  later document, differently, is reported there (`DuplicateModel`), and
+  the first declaration is used. A redeclaration identical to the first
+  (same kind, ports, port types, defaults and descriptions, `editable`,
+  metadata and everything else the view reads) is not reported: a tree file
+  saved in reference mode repeats the project's models it uses in its own
+  block (§3.2), so a project the reference has saved must load clean. How
+  the reference merges models across a project's files is not in the
+  record; this choice is coppice's.
 
 ### 2.4 `<TreeNodesModel>` (F4) — ESTABLISHED, surface §3
 

@@ -562,7 +562,9 @@ fn a_long_chain_of_includes_does_not_exhaust_the_stack() {
 #[test]
 fn a_model_repeated_within_a_later_document_is_reported_once_per_declaration() {
     let main = root(r#"<include path="t.xml"/><TreeNodesModel><Action ID="M"/></TreeNodesModel>"#);
-    let t = root(r#"<TreeNodesModel><Action ID="M"/><Condition ID="M"/></TreeNodesModel>"#);
+    let t = root(
+        r#"<TreeNodesModel><Action ID="M" editable="true"/><Condition ID="M"/></TreeNodesModel>"#,
+    );
     let mut m = Mem::with(&[("/p/main.btproj", &main), ("/p/t.xml", &t)]);
     let p = load(&mut m, "/p/main.btproj");
     // The first M in t.xml repeats the project file's; the second repeats
@@ -626,4 +628,55 @@ fn tree_lookups_do_not_rebuild_the_registry() {
     assert_eq!(p.trees().len(), N);
     let took = started.elapsed();
     assert!(took.as_secs() < 5, "lookups took {took:?}");
+}
+
+#[test]
+fn an_identical_redeclaration_in_a_later_document_is_not_reported() {
+    let model = r#"<Action ID="M" editable="true"><input_port name="a" type="int">the a</input_port></Action>"#;
+    let main = root(&format!(
+        r#"<include path="t.xml"/><TreeNodesModel>{model}</TreeNodesModel>"#
+    ));
+    // Same declaration, laid out differently.
+    let t = root(
+        r#"<TreeNodesModel>
+  <Action ID="M"
+          editable="true">
+    <input_port name="a" type="int">the a</input_port>
+  </Action>
+</TreeNodesModel>"#,
+    );
+    let mut m = Mem::with(&[("/p/main.btproj", &main), ("/p/t.xml", &t)]);
+    let p = load(&mut m, "/p/main.btproj");
+    assert_eq!(diags(&p), []);
+    assert_eq!(p.models()[0].offset, at(&main, "<Action"));
+}
+
+#[test]
+fn any_difference_in_a_redeclaration_is_reported() {
+    let main = root(concat!(
+        r#"<include path="t.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="int">d</input_port></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    for other in [
+        r#"<Condition ID="M" editable="true"><input_port name="a" type="int">d</input_port></Condition>"#,
+        r#"<Action ID="M"><input_port name="a" type="int">d</input_port></Action>"#,
+        r#"<Action ID="M" editable="true"><output_port name="a" type="int">d</output_port></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="b" type="int">d</input_port></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="bool">d</input_port></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="int" default="1">d</input_port></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="int">e</input_port></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="int">d</input_port><input_port name="c"/></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="int">d</input_port><MetadataFields><Metadata k="v"/></MetadataFields></Action>"#,
+        r#"<Action ID="M" editable="true"><description>x</description><input_port name="a" type="int">d</input_port></Action>"#,
+    ] {
+        let t = root(&format!("<TreeNodesModel>{other}</TreeNodesModel>"));
+        let mut m = Mem::with(&[("/p/main.btproj", &main), ("/p/t.xml", &t)]);
+        let p = load(&mut m, "/p/main.btproj");
+        let kinds: Vec<_> = diags(&p).into_iter().map(|(d, k, _)| (d, k)).collect();
+        assert!(
+            kinds.contains(&(1, DiagnosticKind::DuplicateModel)),
+            "{other}: {kinds:?}"
+        );
+    }
 }

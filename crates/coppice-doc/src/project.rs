@@ -113,6 +113,18 @@ impl std::error::Error for LoadError {
     }
 }
 
+/// Whether two declarations of a model say the same thing: everything the
+/// view reads, except where each one is.
+fn same_model(a: &NodeModel, b: &NodeModel) -> bool {
+    NodeModel {
+        offset: 0,
+        ..a.clone()
+    } == NodeModel {
+        offset: 0,
+        ..b.clone()
+    }
+}
+
 /// A loaded project (spec §2.3.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
@@ -513,10 +525,13 @@ impl Project {
             }
         }
 
-        // A model declared again in a later document, reported at its first
-        // declaration in that document. Repeats within one document are
-        // already reported by that document.
-        let mut first_in: HashMap<String, usize> = HashMap::new();
+        // A model declared again in a later document, differently, reported
+        // at its first declaration in that document. An identical
+        // redeclaration is not reported: a tree file saved in reference
+        // mode repeats the project's models in its own block (spec §2.3.1).
+        // Repeats within one document are already reported by that
+        // document.
+        let mut first_in: HashMap<String, (usize, NodeModel)> = HashMap::new();
         for (document, d) in self.documents.iter().enumerate() {
             let mut here: HashSet<String> = HashSet::new();
             for m in d.tree.models() {
@@ -524,7 +539,8 @@ impl Project {
                     continue;
                 }
                 match first_in.get(&m.id) {
-                    Some(&first) => push(
+                    Some((_, model)) if same_model(model, &m) => {}
+                    Some(&(first, _)) => push(
                         document,
                         DiagnosticKind::DuplicateModel,
                         m.offset,
@@ -535,7 +551,7 @@ impl Project {
                         ),
                     ),
                     None => {
-                        first_in.insert(m.id, document);
+                        first_in.insert(m.id.clone(), (document, m));
                     }
                 }
             }

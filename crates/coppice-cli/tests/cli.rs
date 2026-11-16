@@ -165,6 +165,22 @@ fn reference_save_in_a_project_writes_what_the_reference_wrote() {
         fs::read(dir.join("tree.xml")).unwrap(),
         fs::read(fixture("reference/o-answers-2/out-o14/tree.xml")).unwrap()
     );
+    // The saved tree now repeats the project's model in its own block; the
+    // next save in the same project still goes through (#12).
+    let out = run(&[
+        Path::new("save"),
+        &dir.join("unused.xml"),
+        Path::new("--reference"),
+        Path::new("--project"),
+        &dir.join("proj.btproj"),
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        fs::read(dir.join("unused.xml")).unwrap(),
+        fs::read(fixture("reference/o-answers-2/out-o14/unused.xml")).unwrap()
+    );
+    let out = run(&[Path::new("check"), &dir.join("proj.btproj")]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     // A file outside the project is refused.
     fs::copy(dir.join("unused.xml"), dir.join("other.xml")).unwrap();
     let out = run(&[
@@ -671,8 +687,7 @@ fn a_file_swapped_during_a_save_is_not_replaced() {
 
 #[test]
 fn reference_save_of_the_other_tree_writes_what_the_reference_wrote() {
-    // A fresh copy: a saved tree file declares its models itself, which
-    // then duplicates the project's declaration.
+    // From a fresh copy, as the reference saved it.
     project_row(
         "cli-save-project-unused",
         "reference/o-answers-2/in-o14-models",
