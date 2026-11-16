@@ -20,7 +20,8 @@ Toolchain prerequisites and the local development loop for coppice.
 
 `just check` and `just test` need nothing else. `just oracle` (the `.btlog`
 oracle, spec §8) also needs CMake 3.16.3 or later and a C++17 compiler
-with GCC's libstdc++, as on Linux, to build BehaviorTree.CPP 4.9.0 and the
+using GCC's libstdc++ (as on Linux; not libc++ or MSVC, whose clocks the
+harness's timing assumption does not hold for), to build BehaviorTree.CPP 4.9.0 and the
 harness in `tests/harness/`. It runs with CMake 3.31.6 and GCC 14.2 locally,
 and GCC 13.3 in CI. It downloads the library's release
 archive from GitHub, or builds offline from an extracted copy named by

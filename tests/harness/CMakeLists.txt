@@ -23,7 +23,8 @@ set(BTCPP_SQLITE_LOGGING OFF CACHE BOOL "" FORCE)
 
 # The release archive, pinned by hash. To build offline, pass
 # -DFETCHCONTENT_SOURCE_DIR_BEHAVIORTREE_CPP=<extracted 4.9.0 tree>. That
-# skips the hash, so the version is checked below.
+# skips the hash, so the version label of its project() line is checked
+# below; the copy's contents are not.
 FetchContent_Declare(
   behaviortree_cpp
   URL https://github.com/BehaviorTree/BehaviorTree.CPP/archive/refs/tags/4.9.0.tar.gz
@@ -33,7 +34,7 @@ FetchContent_MakeAvailable(behaviortree_cpp)
 
 file(STRINGS "${behaviortree_cpp_SOURCE_DIR}/CMakeLists.txt" btcpp_project
      REGEX "^project\\(behaviortree_cpp VERSION ")
-if(NOT btcpp_project MATCHES "VERSION 4\\.9\\.0 ")
+if(NOT btcpp_project MATCHES "VERSION 4\\.9\\.0[ )]")
   message(FATAL_ERROR "expected BehaviorTree.CPP 4.9.0 in ${behaviortree_cpp_SOURCE_DIR}, found: ${btcpp_project}")
 endif()
 
