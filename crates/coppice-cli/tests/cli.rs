@@ -610,7 +610,6 @@ fn race(name: &str, meddle: impl FnOnce(&Path)) {
         .unwrap();
     assert!(made.success());
     let tree = dir.join("tree.xml");
-    let before = fs::read(&tree).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_coppice"))
         .args([
             "save",
@@ -628,6 +627,7 @@ fn race(name: &str, meddle: impl FnOnce(&Path)) {
         .open(dir.join("proj.btproj"))
         .unwrap();
     meddle(&dir);
+    let before = fs::read(&tree).unwrap();
     pipe.write_all(&project).unwrap();
     drop(pipe);
     let out = child.wait_with_output().unwrap();
@@ -681,4 +681,17 @@ fn reference_save_of_the_other_tree_writes_what_the_reference_wrote() {
         "reference/o-answers-2/out-o14/unused.xml",
         &[],
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_file_rewritten_during_a_save_is_not_replaced() {
+    race("cli-save-race-rewrite", |dir| {
+        // Another program writes into the same file: same inode, new content.
+        let path = dir.join("tree.xml");
+        let mut content = fs::read(&path).unwrap();
+        content.extend_from_slice(b"<!-- edited -->");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(&path, content).unwrap();
+    });
 }

@@ -98,7 +98,8 @@ fn run(args: &[&str]) -> Outcome {
     };
     if let Some(bad) = operands.iter().find(|a| a.starts_with('-')) {
         return Err(usage(format!(
-            "{bad} is where a file name belongs; write ./{bad} for a file named so"
+            "{bad} is where a file name belongs (options follow the file names); \
+             write ./{bad} for a file named so"
         )));
     }
     match args {
@@ -344,21 +345,37 @@ fn replaceable(path: &Path) -> Result<fs::Metadata, Failure> {
 }
 
 /// Whether this user may write `path`: opening it for writing, without
-/// truncating or writing, answers that as the system would.
+/// truncating or writing, answers that as the system would. The open is
+/// visible to file watchers as an open and a close, and waits for any lease
+/// on the file to be released; it is done once per save.
 fn writable(path: &Path) -> bool {
     OpenOptions::new().write(true).open(path).is_ok()
 }
 
-/// The identity of a file, to notice it being swapped while a save runs.
+/// The identity and state of a file, to notice it being swapped, linked or
+/// rewritten while a save runs: device, inode, link count, size and
+/// modification time.
 #[cfg(unix)]
-fn identity(meta: &fs::Metadata) -> (u64, u64, u64) {
+fn identity(meta: &fs::Metadata) -> (u64, u64, u64, u64, i64, i64) {
     use std::os::unix::fs::MetadataExt;
-    (meta.dev(), meta.ino(), meta.nlink())
+    (
+        meta.dev(),
+        meta.ino(),
+        meta.nlink(),
+        meta.len(),
+        meta.mtime(),
+        meta.mtime_nsec(),
+    )
 }
 
 #[cfg(not(unix))]
-fn identity(meta: &fs::Metadata) -> (u64, u64, u64) {
-    (meta.len(), 0, 0)
+fn identity(meta: &fs::Metadata) -> (u64, u64, u64, u64, i64, i64) {
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos() as i64);
+    (0, 0, 0, meta.len(), modified, 0)
 }
 
 /// Gives the new file the old one's owner and group, where the platform has
@@ -458,8 +475,8 @@ fn write_new(path: &Path, bytes: &[u8]) -> Outcome {
 
 /// Replaces `path` whole, atomically, keeping its permissions, owner and
 /// group. Just before the rename, the file is checked again, and a save is
-/// refused if it was swapped, linked or made unwritable since `existing`
-/// was taken. Between that check and the rename a short window remains,
+/// refused if it was swapped, linked or rewritten since `existing` was
+/// taken. Between that check and the rename a short window remains,
 /// which the standard library cannot close.
 fn replace(path: &Path, existing: &fs::Metadata, bytes: &[u8]) -> Outcome {
     let temp = temporary(path, bytes)?;
@@ -475,7 +492,8 @@ fn replace(path: &Path, existing: &fs::Metadata, bytes: &[u8]) -> Outcome {
                 .map_err(|e| refused(format!("{}: {e}", path.display())))
         })
         .and_then(|()| {
-            let now = replaceable(path)?;
+            let now = fs::symlink_metadata(path)
+                .map_err(|e| refused(format!("{}: {e}", path.display())))?;
             if identity(&now) == identity(existing) {
                 Ok(())
             } else {

@@ -159,8 +159,10 @@ In place now:
   error, since a lossless save of an unedited file changes nothing. It
   keeps the file's permissions, owner and group, and refuses a symbolic
   link, a file its user may not write, a file with more than one hard link,
-  and a file that changed while it was being saved, where replacing the
-  file would lose what the user expects kept.
+  a file it cannot give the same owner and group, and a file swapped,
+  linked or rewritten while it was being saved (seen by its inode, link
+  count, size or modification time just before the rename), where
+  replacing the file would lose what the user expects kept.
 - `log dump <file.btlog>` prints the header and one tab-separated line per
   record, with its absolute time and the node's previous status (F11). On
   a damaged file it prints what was read before the damage.
