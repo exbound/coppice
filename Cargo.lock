@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "coppice-btlog"
+version = "0.0.0"
+dependencies = [
+ "coppice-doc",
+]
+
+[[package]]
 name = "coppice-cli"
 version = "0.0.0"
 

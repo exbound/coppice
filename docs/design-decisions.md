@@ -15,8 +15,8 @@ crate.
 
 ## D2. Workspace layout — Decided
 
-The layout below is decided. `coppice-doc` and `coppice-cli` exist; the
-other two crates arrive with their first feature, so the workspace never
+The layout below is decided. `coppice-doc`, `coppice-btlog` and
+`coppice-cli` exist; `coppice-monitor` arrives with its first feature, so the workspace never
 carries an empty crate with nothing to test.
 
 ```
@@ -100,13 +100,18 @@ report without refusing (dialect mismatch, port-versus-model mismatch,
 unknown uid, status byte 10), are a separate, collected list, never an
 error. The CLI uses `anyhow` at its top level only.
 
-## D8. Test harness — Provisional (the CI change confirms it)
+## D8. Test harness — Decided for logs; Provisional for the monitor
 
 - **BehaviorTree.CPP 4.9.0 is built from source in CI** (it is MIT) into a
-  small harness program under `tests/harness/`. The harness runs
-  self-authored trees, writes `.btlog` with `FileLogger2` along with its own
-  record of what it wrote, and serves a `Groot2Publisher` for the
-  monitor-client tests. The build is cached by version.
+  small harness program under `tests/harness/`: CMake fetches the release
+  archive, pinned by SHA-256, and builds only the core library. The harness
+  runs self-authored trees and writes `.btlog` with `FileLogger2` along with
+  its own record of what it wrote (`btlog_harness`, in place since F11 and
+  F12). `just oracle` builds it, runs it, and runs the ignored oracle tests
+  against its output; the CI `oracle` job runs that recipe, with the build
+  directory cached by the harness sources. The oracle files are generated
+  on each run, never committed. For the monitor-client tests the harness
+  will also serve a `Groot2Publisher`; that part is still Provisional.
 - **`btview mock`** (Apache-2.0, installed with its version pinned) is the
   second, independent publisher.
 - Byte-exact comparisons fail with a hex diff at the first differing

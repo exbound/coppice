@@ -28,3 +28,13 @@ check: && lint
 # Run the test suite
 test:
     cargo test --workspace --locked
+
+# Needs cmake and a C++17 compiler. Set BTCPP_SOURCE_DIR to an extracted
+# 4.9.0 tree to build without downloading.
+[doc("Build the BehaviorTree.CPP harness and test .btlog against its output")]
+oracle:
+    cmake -S tests/harness -B target/harness -DCMAKE_BUILD_TYPE=Release "-DFETCHCONTENT_SOURCE_DIR_BEHAVIORTREE_CPP=${BTCPP_SOURCE_DIR:-}"
+    cmake --build target/harness --parallel
+    rm -rf target/btlog-oracle
+    target/harness/btlog_harness target/btlog-oracle
+    COPPICE_BTLOG_ORACLE="$PWD/target/btlog-oracle" cargo test -p coppice-btlog --test oracle --locked -- --include-ignored
