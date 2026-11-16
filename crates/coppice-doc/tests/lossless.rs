@@ -482,3 +482,35 @@ fn nesting_is_capped_at_max_depth() {
         }
     );
 }
+
+/// Every file of both reference fixture sets (spec §8, set 2), walked
+/// recursively.
+fn reference_fixtures() -> Vec<(PathBuf, Vec<u8>)> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/reference");
+    let mut stack = vec![root];
+    let mut out = Vec::new();
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("reference fixture dir") {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                let bytes = std::fs::read(&p).unwrap();
+                out.push((p, bytes));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn every_reference_fixture_parses_and_round_trips() {
+    let files = reference_fixtures();
+    // 44 in the first answers set, 50 in the second.
+    assert_eq!(files.len(), 94, "reference fixture count changed");
+    for (path, bytes) in files {
+        let doc = Document::parse(&bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(doc.render().as_bytes(), &bytes[..], "{}", path.display());
+    }
+}
