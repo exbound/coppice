@@ -51,14 +51,14 @@ list.
 |---|---------|------|---------------|-------|----------|------|
 | F1 | Parse tree XML, v4 dialect, all elements and attributes | C3 | yes (surface §5) | yes — the span model (`lib.rs`, `parse.rs`) and the behavior-tree view (`tree.rs`: root attributes, includes, trees, models) | partial — self-authored and reference fixtures, `crates/coppice-doc/tests/lossless.rs` and `tree_document.rs`; no comparison against the reference's own reading | §2.1 |
 | F2 | Parse tree XML, v3 dialect | C3 | yes (dossier G-5) | yes — the same parser and view; v3 spellings kept as written | partial — one self-authored v3 fixture | §2.2 |
-| F3 | Parse `.btproj` projects and resolve `<include>` | C3 | yes (surface §3, dossier WP1) | none | none | §2.3 |
+| F3 | Parse `.btproj` projects and resolve `<include>` | C3 | yes (surface §3, dossier WP1) | yes — `project.rs`: the library's include resolution, plus coppice's handling of cycles and of a file reached twice (§2.3.1) | partial — self-authored on-disk fixtures (`tests/fixtures/project/`) and in-memory file sets, `crates/coppice-doc/tests/project.rs`; resolution is checked against the library's source, not run against the library or the reference | §2.3 |
 | F4 | Parse `<TreeNodesModel>`, including tolerated extensions | C3 | yes (surface §3) | yes — kinds, ports, `editable`, `<description>`, metadata, merged blocks | partial — self-authored and reference fixtures | §2.4 |
 | F5 | Lossless save (coppice's default): load then save unmodified, byte-identical | C3 | n/a — the reference has no lossless save (answers O-9); this is coppice's own guarantee | yes | partial — byte-exact over the self-authored fixture set plus the one-byte negative control | §3.1 |
 | F6 | Reference save of a tree file (`--reference`): the canonical writer | C3 | partial — canonical style established (answers); attribute wrapping and escaping beyond the fixtures OPEN | none | none | §3.2 |
 | F7 | Reference save in V3 mode | C3 | partial — dossier G-1 only; whether V3 saves also normalize is OPEN (O-12) | none | none | §3.5 |
 | F8 | Reference project export: flatten includes, copy trees, embed models | C3 | partial (answers O-1, O-2, O-4, O-6; include order, model selection and duplicate basenames are open) | none | none | §3.3 |
 | F9 | Reference save-as of a standalone tree: a bare canonical tree | C3 | yes (answers O-5) | none | none | §3.4 |
-| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Not yet across a project (models in the project file, trees in included files: F3), nor on logs or the monitor tree | partial — the F10 reference fixtures (the leaf-with-child trees) and inline inputs | §2.5, §3.6 |
+| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Across a project (F3, §2.3.1): nodes checked against the project's merged models, plus include problems, replaced trees, an unknown main tree and subtrees that name no tree. Not yet on logs or the monitor tree | partial — the F10 reference fixtures (the leaf-with-child trees) and inline inputs | §2.5, §3.6 |
 | F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | none | none | §4.1 |
 | F12 | Write `.btlog` | C2 | yes (surface §1) | none | none | §4.2 |
 | F13 | Monitor client: connect, FULLTREE, STATUS polling, heartbeat | C6 | yes (surface §2, dossier G-4/G-5) | none | none | §5.1–5.4 |
@@ -140,6 +140,63 @@ spellings and never translate one into the other.
 - A project may hold multiple trees across files; the reference loads a
   7-tree, 10-model project (dossier WP3). Loading builds one project model
   over all included documents, each document keeping its own bytes (§3.1).
+
+#### 2.3.1 How coppice loads a project
+
+Loading starts from one file (a `.btproj` or a tree file) and follows its
+includes. Only the starting file is required: if it cannot be read or parsed,
+or its top-level element is not `<root>`, the load fails. Anything wrong
+below it is a diagnostic (D7), and the include concerned is skipped.
+
+What the library decides, and coppice mirrors (BT 4.9.0
+`src/xml_parsing.cpp`):
+
+- Only `<include>` children of `<root>` count, in source order (`:365`).
+- An include without a `path` is an error to the library (`:373-377`);
+  coppice reports it (`IncompleteInclude`), and treats an empty `path` the
+  same way, since it names no file.
+- With `ros_pkg` and an absolute `path`, the library ignores `ros_pkg`
+  (`:387-393`), and so does coppice. With `ros_pkg` and a relative `path`,
+  coppice reports `RosPackageInclude` (above).
+- A relative `path` is joined to the directory of the including file as it
+  was reached, not of its canonical form (`:409-419`).
+- A file that cannot be read or is not well-formed is an error to the
+  library (`:339-347`); coppice reports `UnreadableInclude` or
+  `MalformedInclude`. A file whose top-level element is not `<root>` is
+  `MalformedInclude` too.
+- Trees are registered by `ID` after the file's own includes are loaded,
+  and a later registration of an `ID` replaces the earlier one (`:444-458`).
+  So a file's own trees win over its includes' trees, and a later include
+  wins over an earlier sibling. coppice reports each replacement
+  (`DuplicateTree`, at the replacing tree) and resolves the name as the
+  library does.
+- `main_tree_to_execute` is read from the starting file's `<root>`
+  (`:700-718`). A name that no tree has is reported (`UnknownMainTree`).
+- A `<SubTree ID>` (and the v3 `<SubTreePlus ID>`) naming no tree in the
+  project fails when the library instantiates it (`:1195-1199`); coppice
+  reports it (`UnknownSubTree`).
+
+What the library leaves undefined, and coppice decides:
+
+- **Cycles.** The library has no cycle check, so a file that includes
+  itself, directly or through others, recurses until it fails. coppice
+  reports the include that closes the cycle (`IncludeCycle`) and does not
+  follow it.
+- **The same file reached twice.** The library loads it again. coppice
+  loads each file once, identified by its canonical path (so a symbolic
+  link to a loaded file is the same file), and does not report the repeat.
+  Its trees keep the registration position of the first visit, where the
+  library's would be the last; the two differ only when another file
+  declares the same tree `ID`.
+- **Models across a project.** The library reads no models from the XML
+  except subtree models (`:319-337`). coppice merges the
+  `<TreeNodesModel>` entries of every loaded
+  document in load order (the starting file, then each include depth-first
+  in source order), and checks every tree against the merged list
+  (`LeafWithChildren`, `UnknownPort`, §2.5). An `ID` declared again in a
+  later document is reported there (`DuplicateModel`), and the first
+  declaration is used. How the reference merges models across a project's
+  files is not in the record; this choice is coppice's.
 
 ### 2.4 `<TreeNodesModel>` (F4) — ESTABLISHED, surface §3
 

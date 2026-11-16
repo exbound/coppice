@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4">
+  <include path="sub/b.xml"/>
+  <BehaviorTree ID="A">
+    <Sequence>
+      <Greet who="world"/>
+      <Greet whom="typo"/>
+      <SubTree ID="B"/>
+      <SubTree ID="Common"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

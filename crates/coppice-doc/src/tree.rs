@@ -83,6 +83,8 @@ pub struct NodeModel {
     pub has_description: bool,
     /// The `<MetadataFields>` key/value pairs, in source order.
     pub metadata: Vec<(String, String)>,
+    /// Byte offset of the entry element in its document's source.
+    pub offset: usize,
 }
 
 /// One `<include>` of a document (spec §2.3).
@@ -125,6 +127,27 @@ pub enum DiagnosticKind {
     /// node written with its own tag that carries an `ID` attribute; the
     /// library refuses both (BT 4.9.0 `src/xml_parsing.cpp:560-563,763-766`).
     MisplacedNodeId,
+    /// An `<include>` without a `path`, or with an empty one (spec §2.3.1).
+    IncompleteInclude,
+    /// An `<include>` with `ros_pkg` and a relative `path`: coppice has no
+    /// ROS package index to resolve it (spec §2.3).
+    RosPackageInclude,
+    /// An included file could not be read.
+    UnreadableInclude,
+    /// An included file is not well-formed XML, or its top-level element is
+    /// not `<root>`.
+    MalformedInclude,
+    /// An `<include>` that leads back to a file already being loaded on the
+    /// same chain of includes; it is not followed.
+    IncludeCycle,
+    /// A `<BehaviorTree>` whose `ID` was already registered; the library
+    /// keeps this later one (BT 4.9.0 `src/xml_parsing.cpp:444-458`).
+    DuplicateTree,
+    /// `main_tree_to_execute` names no tree of the project.
+    UnknownMainTree,
+    /// A `<SubTree>` or `<SubTreePlus>` whose `ID` names no tree of the
+    /// project.
+    UnknownSubTree,
 }
 
 /// A condition worth reporting, at a byte offset in the source.
@@ -365,6 +388,7 @@ impl TreeDocument {
                     editable: entry.attribute("editable") == Some("true"),
                     has_description: entry.child_elements().any(|c| c.name == "description"),
                     metadata: metadata_pairs(entry),
+                    offset: entry.span.start,
                 });
             }
         }
@@ -388,8 +412,18 @@ impl TreeDocument {
         }
     }
 
-    /// Conditions worth reporting, sorted by offset.
+    /// Conditions worth reporting, sorted by offset. Nodes are checked
+    /// against this document's own models.
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        self.diagnostics_with_models(&self.models())
+    }
+
+    /// As [`TreeDocument::diagnostics`], but nodes are checked against
+    /// `models` (a project's merged list, spec §2.3.1) instead of this
+    /// document's own. The checks of the document's own model entries
+    /// (kinds, IDs, duplicates within the document, built-in shadowing) are
+    /// unchanged.
+    pub fn diagnostics_with_models(&self, models: &[NodeModel]) -> Vec<Diagnostic> {
         let root = self.root();
         let mut out = Vec::new();
         if self.format().is_none() {
@@ -457,20 +491,12 @@ impl TreeDocument {
             }
         }
         // Duplicate and shadowing declarations, from the parsed models.
-        let models = self.models();
-        let mut entries = root
-            .child_elements()
-            .filter(|e| e.name == "TreeNodesModel")
-            .flat_map(|b| b.child_elements())
-            .filter(|e| {
-                model_kind(&e.name).is_some() && e.attribute("ID").is_some_and(|i| !i.is_empty())
-            });
-        for (n, m) in models.iter().enumerate() {
-            let Some(entry) = entries.next() else { break };
-            if models[..n].iter().any(|earlier| earlier.id == m.id) {
+        let own = self.models();
+        for (n, m) in own.iter().enumerate() {
+            if own[..n].iter().any(|earlier| earlier.id == m.id) {
                 out.push(Diagnostic {
                     kind: DiagnosticKind::DuplicateModel,
-                    offset: entry.span.start,
+                    offset: m.offset,
                     message: format!(
                         "model {} is declared more than once; the first is used",
                         m.id
@@ -480,7 +506,7 @@ impl TreeDocument {
             if is_builtin(&m.id) && m.kind.is_leaf() != BUILTIN_LEAVES.contains(&m.id.as_str()) {
                 out.push(Diagnostic {
                     kind: DiagnosticKind::ModelShadowsBuiltin,
-                    offset: entry.span.start,
+                    offset: m.offset,
                     message: format!(
                         "model {} declares the built-in node {} as {}; the library uses its built-in",
                         m.id,
@@ -492,7 +518,7 @@ impl TreeDocument {
         }
         // Node-level checks, inside every <BehaviorTree> child of <root>.
         for tree in self.behavior_trees() {
-            walk(tree, &models, &mut out);
+            walk(tree, models, &mut out);
         }
         out.sort_by_key(|d| d.offset);
         out

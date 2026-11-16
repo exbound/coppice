@@ -1,6 +1,7 @@
 //! Behavior-tree documents: projects and tree XML in both dialects.
 //!
-//! Implements F5 (lossless round-trip) and the parsing half of F1 of
+//! Implements F5 (lossless round-trip), the reading half of F1, F2 and F4,
+//! project loading (F3, [`Project`]) and the F10 diagnostics of
 //! `docs/engineering-spec.md`, using the design in `docs/design-decisions.md`
 //! D3: a document keeps its original source, and every node of the parsed
 //! tree records the byte range it came from. Output is rebuilt from those
@@ -9,11 +10,15 @@
 //! without disturbing anything else.
 
 mod parse;
+mod project;
 mod tree;
 
 use std::ops::Range;
 
 pub use parse::{MAX_DEPTH, ParseError};
+pub use project::{
+    Disk, Files, LoadError, Project, ProjectDiagnostic, ProjectDocument, ProjectTree,
+};
 pub use tree::{
     BUILTIN_BRANCHES, BUILTIN_LEAVES, Diagnostic, DiagnosticKind, Dialect, Include, ModelKind,
     NodeModel, NotATreeDocument, Port, PortDirection, RESERVED_ATTRIBUTES, TreeDocument,
