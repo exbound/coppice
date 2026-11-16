@@ -859,3 +859,96 @@ fn a_tree_id_the_library_refuses_but_the_reference_writes_is_written() {
         );
     }
 }
+
+#[test]
+fn a_node_is_written_as_it_was_checked() {
+    // In V4, SubTreePlus is an ordinary node type; declared, it is written
+    // with `name` and every port, not as a subtree.
+    let src = v4(
+        r#"<BehaviorTree ID="T"><SubTreePlus name="n" p="1"/></BehaviorTree><TreeNodesModel><Action ID="SubTreePlus"><input_port name="p"/><input_port name="q"/></Action></TreeNodesModel>"#,
+    );
+    let t = view(&src);
+    let w = write_tree(&t, &t.models(), &ReferenceOptions::default()).unwrap();
+    assert!(
+        w.text.contains(
+            "    <SubTreePlus name=\"n\"\n                 p=\"1\"\n                 q=\"\"/>\n"
+        ),
+        "{}",
+        w.text
+    );
+    // A <BehaviorTree> used as a node inside a tree has no rule.
+    let src = v4(
+        r#"<BehaviorTree ID="T"><Inverter><BehaviorTree name="n" p="1"><AlwaysSuccess/></BehaviorTree></Inverter></BehaviorTree><TreeNodesModel><Decorator ID="BehaviorTree"><input_port name="p"/></Decorator></TreeNodesModel>"#,
+    );
+    assert_eq!(
+        refusals(&src, &ReferenceOptions::default()),
+        [(
+            DiagnosticKind::NotInRecord,
+            at(&src, r#"<BehaviorTree name"#)
+        )]
+    );
+    let src = v3_tree(r#"<Sequence><BehaviorTree name="n" p="1"/></Sequence>"#);
+    assert_eq!(
+        refusals(&src, &v3()),
+        [(
+            DiagnosticKind::NotInRecord,
+            at(&src, r#"<BehaviorTree name"#)
+        )]
+    );
+}
+
+#[test]
+fn a_reactive_sequence_takes_at_most_one_async_sequence() {
+    let one = tree_of(
+        "<ReactiveSequence><AsyncSequence><AlwaysSuccess/></AsyncSequence><AlwaysSuccess/></ReactiveSequence>",
+    );
+    let t = view(&one);
+    assert!(write_tree(&t, &[], &ReferenceOptions::default()).is_ok());
+    let two = tree_of(
+        "<ReactiveSequence><AsyncSequence><AlwaysSuccess/></AsyncSequence><AsyncSequence><AlwaysSuccess/></AsyncSequence></ReactiveSequence>",
+    );
+    assert_eq!(
+        refusals(&two, &ReferenceOptions::default()),
+        [(DiagnosticKind::NotInRecord, at(&two, "<ReactiveSequence"))]
+    );
+}
+
+#[test]
+fn every_built_in_branch_takes_the_library_child_count() {
+    // Decorators: exactly one child; controls: at least one (TryCatch two).
+    // A branch with no children is refused, and one with what it takes is
+    // written. This pins which built-ins are decorators.
+    let decorators = [
+        "Inverter",
+        "RetryUntilSuccessful",
+        "KeepRunningUntilFailure",
+        "Repeat",
+        "Timeout",
+        "Delay",
+        "RunOnce",
+        "ForceSuccess",
+        "ForceFailure",
+        "Precondition",
+        "LoopInt",
+        "LoopBool",
+        "LoopDouble",
+        "LoopString",
+        "SkipUnlessUpdated",
+        "WaitValueUpdate",
+    ];
+    for b in coppice_doc::BUILTIN_BRANCHES {
+        if *b == "SubTree" {
+            continue;
+        }
+        let empty = tree_of(&format!("<{b}/>"));
+        assert_eq!(
+            refusals(&empty, &ReferenceOptions::default()),
+            [(DiagnosticKind::NotInRecord, at(&empty, &format!("<{b}/>")))],
+            "{b} with no children"
+        );
+        let two = tree_of(&format!("<{b}><AlwaysSuccess/><AlwaysFailure/></{b}>"));
+        let t = view(&two);
+        let written = write_tree(&t, &[], &ReferenceOptions::default()).is_ok();
+        assert_eq!(written, !decorators.contains(b), "{b} with two children");
+    }
+}

@@ -398,8 +398,14 @@ fn classify(
         ));
         return;
     }
-    let subtree = name == "SubTree" || (name == "SubTreePlus" && options.mode == WriteMode::V3);
-    if subtree {
+    if name == "BehaviorTree" || name == "TreeNodesModel" {
+        refusals.push(uncovered(
+            e.span.start,
+            format!("a <{name}> used as a node inside a tree"),
+        ));
+        return;
+    }
+    if is_subtree_node(name, options.mode) {
         match e.attribute("ID") {
             None | Some("") => refusals.push(uncovered(
                 e.span.start,
@@ -462,6 +468,20 @@ fn classify(
             ));
         } else {
             check_children(e, builtin_shape(name), refusals);
+            // The library refuses a ReactiveSequence with more than one
+            // async child (BT 4.9.0 `src/xml_parsing.cpp:642-668`); of the
+            // names it counts, `AsyncSequence` is the one it registers.
+            if name == "ReactiveSequence"
+                && e.child_elements()
+                    .filter(|c| c.name == "AsyncSequence")
+                    .count()
+                    > 1
+            {
+                refusals.push(uncovered(
+                    e.span.start,
+                    "a <ReactiveSequence> with more than one <AsyncSequence> child, which the library refuses".to_owned(),
+                ));
+            }
         }
         return;
     }
@@ -505,6 +525,13 @@ fn classify(
         }),
         WriteMode::V3 => import_model(e, used, refusals, notes),
     }
+}
+
+/// Whether `name` is written as a subtree node (`ID` and nothing else):
+/// `SubTree`, and `SubTreePlus` in V3 mode only. Both `classify` and
+/// `attributes_of` decide by this, so a node is written as it was checked.
+fn is_subtree_node(name: &str, mode: WriteMode) -> bool {
+    name == "SubTree" || (name == "SubTreePlus" && mode == WriteMode::V3)
 }
 
 /// The V3 model importer's defaults (spec §3.5): an Action, editable,
@@ -735,7 +762,9 @@ fn write_element(
     options: &ReferenceOptions,
     used: &BTreeMap<String, NodeModel>,
 ) {
-    // Iterative: an explicit stack of (element, indent, closing?).
+    // Iterative: an explicit stack of (element, indent, closing?). The
+    // element at `top_indent` is the `<BehaviorTree>` itself.
+    let top_indent = indent;
     let mut stack: Vec<(&Element, usize, bool)> = vec![(e, indent, false)];
     while let Some((e, indent, closing)) = stack.pop() {
         if closing {
@@ -745,7 +774,7 @@ fn write_element(
             out.push_str(">\n");
             continue;
         }
-        let attrs = attributes_of(e, lookup, options, used);
+        let attrs = attributes_of(e, indent == top_indent, lookup, options, used);
         let children: Vec<&Element> = e.child_elements().collect();
         write_open(out, indent, &e.name, &attrs, !children.is_empty());
         if !children.is_empty() {
@@ -761,12 +790,13 @@ fn write_element(
 /// already refused everything this does not cover.
 fn attributes_of(
     e: &Element,
+    tree: bool,
     lookup: &ModelLookup<'_>,
     options: &ReferenceOptions,
     used: &BTreeMap<String, NodeModel>,
 ) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
-    if e.name == "BehaviorTree" || e.name == "SubTree" || e.name == "SubTreePlus" {
+    if tree || is_subtree_node(&e.name, options.mode) {
         if let Some(id) = e.attribute("ID") {
             out.push(("ID".to_owned(), id.to_owned()));
         }

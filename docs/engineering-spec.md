@@ -589,7 +589,10 @@ hypothesis elsewhere. It refuses:
 
 - **any input with a diagnostic** (§2.5, §2.3.1): the inputs the reference
   refuses to load (§3.6) are among them, and a missing format, a malformed
-  model block or a duplicate are not covered;
+  model block or a duplicate are not covered. The diagnostics check
+  built-in ports by the v4 lists in either mode, so in V3 mode a `Script`
+  with an attribute other than `code` is refused as `UnknownPort`, though
+  the writer otherwise treats V3 `Script` as not built in;
 - a **stamp newer than the target** (`NewerStamp`, §3.2), and a stamp or
   target that is not a canonical `MAJOR.MINOR` (`4.10`, not `4.010`,
   `4.10.1` or `5`);
@@ -606,8 +609,9 @@ hypothesis elsewhere. It refuses:
   with an empty one, one naming a built-in or failing the library's
   name check (empty, `Root`, or a forbidden character), or with children;
   a custom node type whose name fails that check; a decorator without
-  exactly one child, a control without children, and a `TryCatch` with
-  fewer than two. Two library rules the record shows the reference does
+  exactly one child, a control without children, a `TryCatch` with
+  fewer than two, and a `ReactiveSequence` with more than one
+  `AsyncSequence` child. Two library rules the record shows the reference does
   **not** apply to tree IDs are not refused: a tree `ID` naming a
   built-in (fixture `out-o4/tree.xml`, `ID="SubTree"`) and one with a
   forbidden character (`in-o9-awkward/charrefs-rt.xml`, `ID="Ain&amp;tree"`);
@@ -615,6 +619,7 @@ hypothesis elsewhere. It refuses:
   attribute that is neither `name` nor a port name (a reserved attribute
   such as `_skipIf`); a subtree node with an attribute other than `ID`
   (O-17 a, b);
+- a `<BehaviorTree>` or `<TreeNodesModel>` used as a node inside a tree;
 - a subtree whose `ID` has a declared `SubTree` model, and a node named
   after a declared `SubTree` model (O-17 f); `<SubTreePlus>` in V4 mode,
   which v4 does not build in, is an undeclared node;
