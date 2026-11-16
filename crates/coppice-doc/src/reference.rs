@@ -253,7 +253,26 @@ pub fn write_tree(
             let mut children: Vec<&Element> = e.child_elements().collect();
             children.reverse();
             stack.extend(children);
+            let before = refusals.len();
             classify(e, &lookup, options, &mut used, &mut refusals, &mut notes);
+            // The writer checks exactly what it will write: every source
+            // attribute must come out with its value (rule 6 drops none),
+            // whatever the diagnostics decided about the node.
+            if refusals.len() == before {
+                let written = attributes_of(e, false, &lookup, options, &used);
+                for a in &e.attributes {
+                    let already = refusals.iter().any(|r| r.offset == a.name_span.start);
+                    if !already && !written.iter().any(|(k, v)| *k == a.name && *v == a.value) {
+                        refusals.push(uncovered(
+                            a.name_span.start,
+                            format!(
+                                "the attribute {} of <{}>, which no rule writes",
+                                a.name, e.name
+                            ),
+                        ));
+                    }
+                }
+            }
         }
     }
 
@@ -405,6 +424,13 @@ fn classify(
         ));
         return;
     }
+    if is_subtree_node(name, options.mode) && lookup.contains_key(name) {
+        refusals.push(uncovered(
+            e.span.start,
+            format!("a declared model {name} that is also a subtree node (spec §7, O-17 i)"),
+        ));
+        return;
+    }
     if is_subtree_node(name, options.mode) {
         match e.attribute("ID") {
             None | Some("") => refusals.push(uncovered(
@@ -469,17 +495,22 @@ fn classify(
         } else {
             check_children(e, builtin_shape(name), refusals);
             // The library refuses a ReactiveSequence with more than one
-            // async child (BT 4.9.0 `src/xml_parsing.cpp:642-668`); of the
-            // names it counts, `AsyncSequence` is the one it registers.
-            if name == "ReactiveSequence"
-                && e.child_elements()
-                    .filter(|c| c.name == "AsyncSequence")
-                    .count()
-                    > 1
-            {
+            // async child: a control registered under one of four names
+            // (BT 4.9.0 `src/xml_parsing.cpp:642-668`). `AsyncSequence` is a
+            // built-in control; the other three can only be declared ones.
+            let async_child = |c: &&Element| {
+                c.name == "AsyncSequence"
+                    || (matches!(
+                        c.name.as_str(),
+                        "ThreadedAction" | "StatefulActionNode" | "CoroActionNode"
+                    ) && lookup
+                        .get(c.name.as_str())
+                        .is_some_and(|m| m.kind == ModelKind::Control))
+            };
+            if name == "ReactiveSequence" && e.child_elements().filter(async_child).count() > 1 {
                 refusals.push(uncovered(
                     e.span.start,
-                    "a <ReactiveSequence> with more than one <AsyncSequence> child, which the library refuses".to_owned(),
+                    "a <ReactiveSequence> with more than one async child, which the library refuses".to_owned(),
                 ));
             }
         }

@@ -952,3 +952,59 @@ fn every_built_in_branch_takes_the_library_child_count() {
         assert_eq!(written, !decorators.contains(b), "{b} with two children");
     }
 }
+
+#[test]
+fn every_source_attribute_is_written_or_the_save_refused() {
+    let not = DiagnosticKind::NotInRecord;
+    // V3: a declared Script model without the node's `code` port.
+    let src = "<root BTCPP_format=\"3\"><BehaviorTree ID=\"T\"><Script code=\"x=1\"/></BehaviorTree><TreeNodesModel><Action ID=\"Script\"><input_port name=\"other\"/></Action></TreeNodesModel></root>".to_owned();
+    assert_eq!(refusals(&src, &v3()), [(not, at(&src, "code="))]);
+    // V4: a declared SubTreePlus, which the diagnostics skip as a subtree.
+    let src = v4(
+        r#"<BehaviorTree ID="T"><SubTreePlus a="1" b="2"/></BehaviorTree><TreeNodesModel><Action ID="SubTreePlus"><input_port name="a"/></Action></TreeNodesModel>"#,
+    );
+    assert_eq!(
+        refusals(&src, &ReferenceOptions::default()),
+        [(not, at(&src, "b="))]
+    );
+    // A subtree node whose element name has a declared model.
+    let src = v4(
+        r#"<BehaviorTree ID="T"><SubTree ID="X"/></BehaviorTree><BehaviorTree ID="X"><AlwaysSuccess/></BehaviorTree><TreeNodesModel><Control ID="SubTree"/></TreeNodesModel>"#,
+    );
+    assert_eq!(
+        refusals(&src, &ReferenceOptions::default()),
+        [(not, at(&src, r#"<SubTree ID="X"/>"#))]
+    );
+    let src = "<root BTCPP_format=\"3\"><BehaviorTree ID=\"T\"><SubTreePlus ID=\"T\"/></BehaviorTree><TreeNodesModel><Action ID=\"SubTreePlus\"/></TreeNodesModel></root>".to_owned();
+    assert_eq!(refusals(&src, &v3()), [(not, at(&src, "<SubTreePlus"))]);
+}
+
+#[test]
+fn declared_async_controls_count_toward_the_reactive_sequence_rule() {
+    let src = v4(
+        r#"<BehaviorTree ID="T"><ReactiveSequence><ThreadedAction><AlwaysSuccess/></ThreadedAction><AsyncSequence><AlwaysSuccess/></AsyncSequence></ReactiveSequence></BehaviorTree><TreeNodesModel><Control ID="ThreadedAction"/></TreeNodesModel>"#,
+    );
+    let t = view(&src);
+    let r: Vec<_> = write_tree(&t, &t.models(), &ReferenceOptions::default())
+        .unwrap_err()
+        .iter()
+        .map(|d| (d.kind, d.offset))
+        .collect();
+    assert_eq!(
+        r,
+        [(DiagnosticKind::NotInRecord, at(&src, "<ReactiveSequence"))]
+    );
+    // Declared as an Action, the same name is not an async control.
+    let src = src.replace(
+        r#"<Control ID="ThreadedAction"/>"#,
+        r#"<Action ID="ThreadedAction"/>"#,
+    );
+    let t = view(&src);
+    let r: Vec<_> = write_tree(&t, &t.models(), &ReferenceOptions::default())
+        .unwrap_err()
+        .iter()
+        .map(|d| d.kind)
+        .collect();
+    // ...but an Action with a child is its own refusal.
+    assert_eq!(r, [DiagnosticKind::LeafWithChildren]);
+}

@@ -610,8 +610,9 @@ hypothesis elsewhere. It refuses:
   name check (empty, `Root`, or a forbidden character), or with children;
   a custom node type whose name fails that check; a decorator without
   exactly one child, a control without children, a `TryCatch` with
-  fewer than two, and a `ReactiveSequence` with more than one
-  `AsyncSequence` child. Two library rules the record shows the reference does
+  fewer than two, and a `ReactiveSequence` with more than one async
+  child (the built-in `AsyncSequence`, or a declared control named
+  `ThreadedAction`, `StatefulActionNode` or `CoroActionNode`). Two library rules the record shows the reference does
   **not** apply to tree IDs are not refused: a tree `ID` naming a
   built-in (fixture `out-o4/tree.xml`, `ID="SubTree"`) and one with a
   forbidden character (`in-o9-awkward/charrefs-rt.xml`, `ID="Ain&amp;tree"`);
@@ -641,9 +642,12 @@ hypothesis elsewhere. It refuses:
   built in); and an undeclared node type that has children or is used
   with different attributes (O-17 h).
 
-As a last check, the writer parses its own output, and refuses to return
-output that is not well-formed; the refusals above are meant to make that
-unreachable.
+The writer checks what it writes, not only what the diagnostics checked:
+every source attribute of a node must be written with its value (rule 6
+drops none), or the save is refused, and a subtree node whose element
+name has a declared model is refused (O-17 i). As a last check, the
+writer parses its own output, and refuses to return output that is not
+well-formed; the refusals above are meant to make that unreachable.
 
 What the writer changed that the reference would have announced in a
 prompt is returned as a note: a raised stamp (`StampRaised`) and a model
