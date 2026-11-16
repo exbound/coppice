@@ -12,7 +12,7 @@ use crate::tree::{
     Diagnostic, DiagnosticKind, ModelKind, ModelLookup, NodeModel, Port, PortDirection,
     TreeDocument, builtin_ports, is_builtin, is_port_name, model_lookup,
 };
-use crate::{Element, Node};
+use crate::{Document, Element, Node};
 
 /// The comment the reference writes before the model block (spec §3.2
 /// rule 4). A file-format element, written in reference mode only.
@@ -165,10 +165,13 @@ pub fn write_tree(
         for child in &e.children {
             match child {
                 Node::Element(c) => {
-                    let node = in_node || e.name == "BehaviorTree";
-                    if c.name != "TreeNodesModel" {
-                        stack.push((c, node));
-                    }
+                    // Text inside a node is dropped (rule 3); anywhere else
+                    // it is refused. Model entries and ports report their
+                    // own text (`unrecognized`, `description`), so text is
+                    // treated as inside a node below `<TreeNodesModel>`'s
+                    // own level.
+                    let node = in_node || e.name == "BehaviorTree" || e.name == "TreeNodesModel";
+                    stack.push((c, node));
                 }
                 Node::CData(span) => {
                     refusals.push(uncovered(span.start, "CDATA".to_owned()));
@@ -309,6 +312,16 @@ pub fn write_tree(
     }
     out.push('\n');
     out.push_str("</root>\n");
+    // A last check, not a rule: the refusals above are meant to make this
+    // unreachable, and no known input reaches it. A writer bug that
+    // produced malformed XML is refused here rather than written.
+    if let Err(e) = Document::parse(out.as_bytes()) {
+        return Err(vec![Diagnostic {
+            kind: DiagnosticKind::NotInRecord,
+            offset: 0,
+            message: format!("the written output is not well-formed ({e}); not written"),
+        }]);
+    }
     notes.sort_by_key(|d| d.offset);
     Ok(Written { text: out, notes })
 }
@@ -392,13 +405,21 @@ fn classify(
                 e.span.start,
                 format!("a <{name}> without an ID, or with an empty one"),
             )),
-            // The library refuses this (BT 4.9.0 `src/xml_parsing.cpp:595-600`).
+            // The library refuses these (BT 4.9.0 `src/xml_parsing.cpp:588-600`).
             Some(id) if is_builtin(id) => refusals.push(uncovered(
                 e.span.start,
                 format!("a <{name}> whose ID is the built-in node {id}"),
             )),
-            Some(_) => {}
+            Some(id) => {
+                if let Some(why) = invalid_model_name(id) {
+                    refusals.push(uncovered(
+                        e.span.start,
+                        format!("a <{name}> whose ID {why}"),
+                    ));
+                }
+            }
         }
+        check_children(e, Children::Exactly(0), refusals);
         for a in &e.attributes {
             if a.name != "ID" {
                 refusals.push(uncovered(
@@ -427,11 +448,39 @@ fn classify(
             ));
         }
     }
-    let v3_builtin = match options.mode {
+    // Which node types are built in depends on the mode (§3.5): in V3
+    // mode only those the record shows getting no model.
+    let builtin = match options.mode {
         WriteMode::V4 => is_builtin(name),
         WriteMode::V3 => V3_BUILTINS_SEEN.contains(&name),
     };
-    if let Some(m) = lookup.get(name).filter(|_| !is_builtin(name)) {
+    if builtin {
+        if lookup.contains_key(name) {
+            refusals.push(uncovered(
+                e.span.start,
+                format!("a declared model {name} that is also a built-in (spec §7, O-17 i)"),
+            ));
+        } else {
+            check_children(e, builtin_shape(name), refusals);
+        }
+        return;
+    }
+    if options.mode == WriteMode::V3 && is_builtin(name) && !V3_NOT_BUILTIN_SEEN.contains(&name) {
+        refusals.push(uncovered(
+            e.span.start,
+            format!("whether V3 mode treats {name} as built-in (spec §7, O-17 h)"),
+        ));
+        return;
+    }
+    // A custom node type: the library validates its name (BT 4.9.0
+    // `src/xml_parsing.cpp:604-610`, `:109-127`).
+    if let Some(why) = invalid_model_name(name) {
+        refusals.push(uncovered(
+            e.span.start,
+            format!("a node type name that {why}"),
+        ));
+    }
+    if let Some(m) = lookup.get(name) {
         if m.kind == ModelKind::SubTree {
             refusals.push(uncovered(
                 e.span.start,
@@ -439,27 +488,14 @@ fn classify(
             ));
             return;
         }
+        let shape = match m.kind {
+            ModelKind::Control => Children::AtLeast(1),
+            ModelKind::Decorator => Children::Exactly(1),
+            _ => Children::Any,
+        };
+        check_children(e, shape, refusals);
         used.entry(m.id.clone()).or_insert_with(|| (*m).clone());
         return;
-    }
-    if is_builtin(name) {
-        if lookup.contains_key(name) {
-            refusals.push(uncovered(
-                e.span.start,
-                format!("a declared model {name} that is also a built-in (spec §7, O-17 i)"),
-            ));
-            return;
-        }
-        if v3_builtin {
-            return;
-        }
-        if !(options.mode == WriteMode::V3 && V3_NOT_BUILTIN_SEEN.contains(&name)) {
-            refusals.push(uncovered(
-                e.span.start,
-                format!("whether V3 mode treats {name} as built-in (spec §7, O-17 h)"),
-            ));
-            return;
-        }
     }
     match options.mode {
         WriteMode::V4 => refusals.push(Diagnostic {
@@ -544,8 +580,114 @@ fn import_model(
     );
 }
 
+/// How many child nodes a node type takes, as the library's loader checks
+/// it (BT 4.9.0 `src/xml_parsing.cpp:612-640`; leaves are checked as
+/// `LeafWithChildren`).
+#[derive(Clone, Copy)]
+enum Children {
+    Any,
+    Exactly(usize),
+    AtLeast(usize),
+}
+
+/// The built-in decorators: one child each (BT 4.9.0 `src/bt_factory.cpp`
+/// registrations, `include/behaviortree_cpp/decorators/`).
+const BUILTIN_DECORATORS: &[&str] = &[
+    "Inverter",
+    "RetryUntilSuccessful",
+    "KeepRunningUntilFailure",
+    "Repeat",
+    "Timeout",
+    "Delay",
+    "RunOnce",
+    "ForceSuccess",
+    "ForceFailure",
+    "Precondition",
+    "LoopInt",
+    "LoopBool",
+    "LoopDouble",
+    "LoopString",
+    "SkipUnlessUpdated",
+    "WaitValueUpdate",
+];
+
+fn builtin_shape(name: &str) -> Children {
+    if crate::tree::BUILTIN_LEAVES.contains(&name) {
+        Children::Any // LeafWithChildren covers leaves.
+    } else if BUILTIN_DECORATORS.contains(&name) {
+        Children::Exactly(1)
+    } else if name == "TryCatch" {
+        Children::AtLeast(2)
+    } else if name == "SubTree" {
+        Children::Exactly(0)
+    } else {
+        Children::AtLeast(1) // the controls
+    }
+}
+
+/// Refuse a node whose child count the library's loader refuses; what the
+/// reference writes for it is not in the record.
+fn check_children(e: &Element, shape: Children, refusals: &mut Vec<Diagnostic>) {
+    let n = e.child_elements().count();
+    let ok = match shape {
+        Children::Any => true,
+        Children::Exactly(k) => n == k,
+        Children::AtLeast(k) => n >= k,
+    };
+    if !ok {
+        refusals.push(uncovered(
+            e.span.start,
+            format!(
+                "a <{}> with {n} child nodes, which the library refuses",
+                e.name
+            ),
+        ));
+    }
+}
+
+/// Why the library's `validateModelName` refuses `name`, if it does (BT
+/// 4.9.0 `src/xml_parsing.cpp:109-127`, `src/basic_types.cpp:524-550`).
+fn invalid_model_name(name: &str) -> Option<&'static str> {
+    const FORBIDDEN: &[char] = &[
+        ' ', '\t', '\n', '\r', '<', '>', '&', '"', '\'', '/', '\\', ':', '*', '?', '|', '.',
+    ];
+    if name.is_empty() {
+        Some("is empty")
+    } else if name == "Root" || name == "root" {
+        Some("is the reserved name Root")
+    } else if name
+        .chars()
+        .any(|c| FORBIDDEN.contains(&c) || (c.is_ascii_control()))
+    {
+        Some("contains a character the library forbids")
+    } else {
+        None
+    }
+}
+
 /// Refuse a model entry the writer cannot write (rule 9).
 fn check_model(m: &NodeModel, refusals: &mut Vec<Diagnostic>) {
+    let mut seen: Vec<&str> = Vec::new();
+    for p in &m.ports {
+        if seen.contains(&p.name.as_str()) {
+            refusals.push(uncovered(
+                m.offset,
+                format!("model {}'s port {} declared twice", m.id, p.name),
+            ));
+        }
+        seen.push(&p.name);
+    }
+    let fields = std::iter::once(m.id.as_str())
+        .chain(m.ports.iter().map(|p| p.name.as_str()))
+        .chain(m.ports.iter().filter_map(|p| p.type_name.as_deref()));
+    for f in fields {
+        if f.contains(['\t', '\n', '\r']) {
+            refusals.push(uncovered(
+                m.offset,
+                format!("model {}: a tab or line break in an attribute value", m.id),
+            ));
+        }
+    }
     for what in &m.unrecognized {
         refusals.push(uncovered(m.offset, format!("model {}'s {what}", m.id)));
     }
@@ -564,9 +706,6 @@ fn check_model(m: &NodeModel, refusals: &mut Vec<Diagnostic>) {
                 format!("model {}'s port {} {what}", m.id, p.name),
             ));
         }
-    }
-    if !m.metadata.is_empty() {
-        refusals.push(uncovered(m.offset, format!("model {}'s metadata", m.id)));
     }
     for p in &m.ports {
         if p.default.is_some() {

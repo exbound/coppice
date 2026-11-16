@@ -695,3 +695,167 @@ fn built_in_ports_are_pinned_to_the_library_source() {
         }
     }
 }
+
+#[test]
+fn every_reference_output_tree_rewrites_to_itself() {
+    // The writer's output is canonical, so the reference's own written
+    // trees must come back byte for byte, saved on their own (their own
+    // models), in the mode and target they were written with.
+    let mut checked = 0;
+    let mut stack = vec![fixtures()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let rel = p
+                .strip_prefix(fixtures())
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            let reference_written = rel.contains("/out-") && !rel.contains("-corrected/")
+                || name.ends_with("-rt.xml")
+                || rel == "o-answers/in-o1-proj-corrected/tree.xml";
+            let src = read(&rel);
+            // Project files are written by the export, not this writer.
+            if !reference_written || name.ends_with(".btproj") || src.contains("<include") {
+                continue;
+            }
+            let options = ReferenceOptions {
+                mode: if src.contains("BTCPP_format=\"3\"") {
+                    WriteMode::V3
+                } else {
+                    WriteMode::V4
+                },
+                target: if src.contains("BTCPP_version=\"4.11\"") {
+                    "4.11"
+                } else {
+                    "4.10"
+                }
+                .to_owned(),
+                ..ReferenceOptions::default()
+            };
+            let t = view(&src);
+            let w = write_tree(&t, &t.models(), &options)
+                .unwrap_or_else(|e| panic!("{rel}: refused: {e:#?}"));
+            assert_bytes(&w.text, &src, &rel);
+            checked += 1;
+        }
+    }
+    // First set: in-o1-proj-corrected/tree.xml, the six -rt.xml, out-o2-*
+    // (2), out-o4 (4), out-o5, out-o6: 15. Second set: out-o10, the
+    // out-o11 in-place save, out-o12 (2), out-o13 (5), out-o14 (2),
+    // out-o16a, out-o16b (2): 14.
+    assert_eq!(checked, 29, "reference output trees checked");
+}
+
+#[test]
+fn round_two_cases_are_refused_where_they_occur() {
+    let d = ReferenceOptions::default();
+    let not = DiagnosticKind::NotInRecord;
+    let model = |m: &str, node: &str| {
+        v4(&format!(
+            r#"<BehaviorTree ID="T">{node}</BehaviorTree><TreeNodesModel>{m}</TreeNodesModel>"#
+        ))
+    };
+    for (src, needle) in [
+        // A port declared twice (would write a duplicate attribute).
+        (
+            model(
+                r#"<Action ID="M"><input_port name="a"/><output_port name="a"/></Action>"#,
+                r#"<M a="1"/>"#,
+            ),
+            r#"<Action ID="M""#,
+        ),
+        // Content inside the model block and inside ports.
+        (model(r#"junk<Action ID="M"/>"#, "<M/>"), "junk"),
+        (
+            model(r#"<![CDATA[x]]><Action ID="M"/>"#, "<M/>"),
+            "<![CDATA[",
+        ),
+        // Entry text and CDATA, and an empty MetadataFields.
+        (
+            model(r#"<Action ID="M">hi</Action>"#, "<M/>"),
+            r#"<Action ID="M""#,
+        ),
+        (
+            model(r#"<Action ID="M"><MetadataFields/></Action>"#, "<M/>"),
+            r#"<Action ID="M""#,
+        ),
+        // Child counts the library refuses.
+        (
+            tree_of(r#"<SubTree ID="S"><AlwaysSuccess/></SubTree>"#),
+            "<SubTree",
+        ),
+        (tree_of("<Sequence/>"), "<Sequence/>"),
+        (
+            tree_of("<Inverter><AlwaysSuccess/><AlwaysFailure/></Inverter>"),
+            "<Inverter",
+        ),
+        (
+            tree_of("<TryCatch><AlwaysSuccess/></TryCatch>"),
+            "<TryCatch",
+        ),
+        (model(r#"<Decorator ID="D"/>"#, "<D/>"), "<D/>"),
+        (model(r#"<Control ID="C"/>"#, "<C/>"), "<C/>"),
+        // Names the library's validateModelName refuses.
+        (tree_of(r#"<SubTree ID="Root"/>"#), "<SubTree"),
+        (tree_of(r#"<SubTree ID="x&amp;y"/>"#), "<SubTree"),
+        (model(r#"<Action ID="Root"/>"#, "<Root/>"), "<Root/>"),
+    ] {
+        assert_eq!(refusals(&src, &d), [(not, at(&src, needle))], "{src}");
+    }
+    // CDATA inside an entry: refused where it is, and as the model's
+    // unmodelled content.
+    let src = model(r#"<Action ID="M"><![CDATA[x]]></Action>"#, "<M/>");
+    assert_eq!(
+        refusals(&src, &d),
+        [
+            (not, at(&src, r#"<Action ID="M""#)),
+            (not, at(&src, "<![CDATA["))
+        ]
+    );
+    // CDATA and a processing instruction inside a port: likewise.
+    for inner in ["<![CDATA[  ]]>", "<?pi x?>"] {
+        let src = model(
+            &format!(r#"<Action ID="M"><input_port name="a">{inner}</input_port></Action>"#),
+            "<M/>",
+        );
+        assert_eq!(
+            refusals(&src, &d),
+            [(not, at(&src, r#"<Action ID="M""#)), (not, at(&src, inner))],
+            "{src}"
+        );
+    }
+    // A tab in a model supplied by another document (a project's).
+    let models_src = v4(
+        r#"<TreeNodesModel><Action ID="M"><input_port name="a" type="x&#9;y"/></Action></TreeNodesModel>"#,
+    );
+    let models = view(&models_src).models();
+    let t = view(&tree_of(r#"<M a="1"/>"#));
+    let r: Vec<_> = write_tree(&t, &models, &d)
+        .unwrap_err()
+        .iter()
+        .map(|d| d.kind)
+        .collect();
+    assert_eq!(r, [not]);
+}
+
+#[test]
+fn a_tree_id_the_library_refuses_but_the_reference_writes_is_written() {
+    // The reference wrote `Ain&amp;tree` (in-o9-awkward/charrefs-rt.xml)
+    // and `SubTree` (out-o4/tree.xml) as tree IDs.
+    for id in ["a&amp;b", "SubTree", "Root"] {
+        let src = v4(&format!(
+            r#"<BehaviorTree ID="{id}"><AlwaysSuccess/></BehaviorTree>"#
+        ));
+        let t = view(&src);
+        assert!(
+            write_tree(&t, &[], &ReferenceOptions::default()).is_ok(),
+            "{id}"
+        );
+    }
+}

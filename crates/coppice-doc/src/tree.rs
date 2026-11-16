@@ -69,8 +69,9 @@ pub struct Port {
     /// description. Empty when there is none.
     pub description: String,
     /// What this view does not model: attributes other than `name`, `type`
-    /// and a non-empty `default`, and child elements, each described in a
-    /// few words.
+    /// and a non-empty `default` (so an empty `default` is listed), child
+    /// elements, CDATA and processing instructions, each described in a few
+    /// words. (CDATA also counts toward `description`.)
     pub unrecognized: Vec<String>,
 }
 
@@ -93,8 +94,9 @@ pub struct NodeModel {
     pub offset: usize,
     /// What this view does not model: attributes other than `ID` and
     /// `editable="true"` (so `editable="false"` is listed), child elements
-    /// other than ports, `<description>` and `<MetadataFields>`, and text,
-    /// each described in a few words.
+    /// other than ports and `<description>` (so `<MetadataFields>`, which
+    /// `metadata` reads, is listed too), text, CDATA and processing
+    /// instructions, each described in a few words.
     pub unrecognized: Vec<String>,
 }
 
@@ -475,10 +477,14 @@ impl TreeDocument {
                                 _ => true,
                             })
                             .map(|a| format!("attribute {}", a.name))
-                            .chain(
-                                port.child_elements()
-                                    .map(|c| format!("element <{}>", c.name)),
-                            )
+                            .chain(port.children.iter().filter_map(|c| match c {
+                                Node::Element(c) => Some(format!("element <{}>", c.name)),
+                                Node::CData(_) => Some("CDATA".to_owned()),
+                                Node::ProcessingInstruction(_) => {
+                                    Some("a processing instruction".to_owned())
+                                }
+                                _ => None,
+                            }))
                             .collect(),
                     });
                 }
@@ -700,7 +706,7 @@ fn entry_unrecognized(doc: &Document, entry: &Element) -> Vec<String> {
             Node::Element(c) => {
                 if !matches!(
                     c.name.as_str(),
-                    "input_port" | "output_port" | "inout_port" | "description" | "MetadataFields"
+                    "input_port" | "output_port" | "inout_port" | "description"
                 ) {
                     out.push(format!("element <{}>", c.name));
                 }
@@ -832,7 +838,7 @@ fn check_node(element: &Element, models: &ModelLookup<'_>, out: &mut Vec<Diagnos
         && m.kind != ModelKind::SubTree
     {
         for a in &element.attributes {
-            if (explicit && a.name == "ID") || !is_port_name(&a.name) {
+            if !is_port_name(&a.name) {
                 continue;
             }
             if m.ports.iter().any(|p| p.name == a.name) {

@@ -600,12 +600,17 @@ hypothesis elsewhere. It refuses:
   `<TreeNodesModel>` (an `<include>`, an unknown element); a
   `<BehaviorTree>` without an `ID` or with another attribute (O-17 c, d);
 - what the library's loader refuses and the record does not show the
-  reference writing (BT 4.9.0 `src/xml_parsing.cpp:571-600`): a
+  reference writing (BT 4.9.0 `src/xml_parsing.cpp:109-127,566-640`): a
   `<BehaviorTree>` with an empty `ID`, two trees with the same `ID`, a
-  tree without exactly one child node, and a subtree node without an
-  `ID`, with an empty one, or naming a built-in. A tree whose `ID` names
-  a built-in, which the library also refuses, is written: the reference
-  writes one (fixture `out-o4/tree.xml`);
+  tree without exactly one child node; a subtree node without an `ID`,
+  with an empty one, one naming a built-in or failing the library's
+  name check (empty, `Root`, or a forbidden character), or with children;
+  a custom node type whose name fails that check; a decorator without
+  exactly one child, a control without children, and a `TryCatch` with
+  fewer than two. Two library rules the record shows the reference does
+  **not** apply to tree IDs are not refused: a tree `ID` naming a
+  built-in (fixture `out-o4/tree.xml`, `ID="SubTree"`) and one with a
+  forbidden character (`in-o9-awkward/charrefs-rt.xml`, `ID="Ain&amp;tree"`);
 - the explicit `<Action|Condition|Control|Decorator ID="…">` form; an
   attribute that is neither `name` nor a port name (a reserved attribute
   such as `_skipIf`); a subtree node with an attribute other than `ID`
@@ -615,19 +620,25 @@ hypothesis elsewhere. It refuses:
   which v4 does not build in, is an undeclared node;
 - a used declared model with a port `default` (empty or not), port
   description text, `<MetadataFields>`, `editable` other than `"true"`,
-  any other attribute or child element, or a port named like a reserved
-  attribute such as `name` (O-17 e); a declared model, used, whose `ID` is
+  any other attribute, child element, text or CDATA, a port declared
+  twice, or a port named like a reserved attribute such as `name` (O-17
+  e), wherever the model was declared; a declared model, used, whose `ID` is
   a built-in's (O-17 i); an attribute on `<TreeNodesModel>`;
-- an attribute value containing a tab or a line break;
+- an attribute value containing a tab or a line break, in the tree or in
+  a used model;
 - a DOCTYPE, a processing instruction, a byte-order mark or CDATA
-  anywhere, and text outside a node (rule 5 covers comments; rule 3 covers
-  text inside a node);
+  anywhere, the model block included, and text outside a node (rule 5
+  covers comments; rule 3 covers text inside a node);
 - in V4 mode, a node type that is neither built in nor declared
   (`UndeclaredNode`, §3.5);
 - in V3 mode: a v4 built-in the record does not place (only `Sequence`,
   `SetBlackboard` and `SubTree` are shown built in, and `Script` shown not
   built in); and an undeclared node type that has children or is used
   with different attributes (O-17 h).
+
+As a last check, the writer parses its own output, and refuses to return
+output that is not well-formed; the refusals above are meant to make that
+unreachable.
 
 What the writer changed that the reference would have announced in a
 prompt is returned as a note: a raised stamp (`StampRaised`) and a model
