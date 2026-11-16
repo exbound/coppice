@@ -649,13 +649,14 @@ A save through a project (`Project::write_reference`) also refuses:
 any project diagnostic in the document being saved (a subtree naming no
 tree among them, §2.3.1); any model diagnostic in any document of the
 project, even one about a model the tree does not use, since the
-project's models fill the model block; and, in either mode, a model block
-that is not empty while any include is unresolved (unreadable, malformed,
-under a ROS package, or without a path), since the file coppice could not
-read may declare a model the block holds, or the one the V3 importer
-would otherwise create. A tree whose block is empty does not depend on
-that file, and a problem elsewhere that does not touch models does not
-block the save. A refusal about a declared model points into the document that
+project's models fill the model block; and any save while an include is
+unresolved (unreadable, malformed, under a ROS package, or without a
+path), in either mode: the file coppice could not read may declare a
+model the save depends on, one the block holds, the one the V3 importer
+would otherwise create, or one naming a built-in or subtree node, which
+the writer refuses when it can see it. A problem elsewhere that neither
+touches models nor leaves an include unresolved does not block the
+save. A refusal about a declared model points into the document that
 declared it.
 
 The writer checks what it writes, not only what the diagnostics checked:

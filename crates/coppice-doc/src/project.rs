@@ -384,8 +384,8 @@ impl Project {
     ///   ones included (a subtree that names no tree);
     /// - any model diagnostic in any document, since the merged models
     ///   fill the model block;
-    /// - a model block that is not empty while an include is unresolved,
-    ///   as a model it holds (or would hold) may be declared there.
+    /// - any save while an include is unresolved, as the unreadable file
+    ///   may declare a model the save depends on.
     ///
     /// A refusal about a declared model points into the document that
     /// declared it.
@@ -458,10 +458,13 @@ impl Project {
                 )
             })
             .collect();
-        // An unreadable file may declare a model the block holds (a
-        // duplicate the project would then refuse, or the declaration that
-        // would win), or the one the V3 importer would otherwise invent.
-        if !written.models.is_empty() && !unresolved.is_empty() {
+        // An unreadable file may declare a model this save depends on: one
+        // the block holds (a duplicate the project would then refuse, or
+        // the declaration that would win), the one the V3 importer would
+        // otherwise create, or one naming a built-in or subtree node,
+        // which the writer refuses when it can see it. Even an empty block
+        // depends on it, so any unresolved include blocks the save.
+        if !unresolved.is_empty() {
             let mut out = unresolved;
             out.push(ProjectDiagnostic {
                 document,
@@ -469,7 +472,7 @@ impl Project {
                     kind: DiagnosticKind::NotInRecord,
                     offset: d.tree.document().root_element().span.start,
                     message: format!(
-                        "the model block holds [{}], but an include is unresolved, and a model may be declared there",
+                        "an include is unresolved, and a model this save depends on may be declared there (the block holds [{}])",
                         written.models.join(", ")
                     ),
                 },

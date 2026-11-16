@@ -1059,13 +1059,19 @@ fn a_project_save_refuses_the_projects_model_diagnostics() {
             (1, DiagnosticKind::DuplicateModel),
         ]
     );
-    // An unrelated problem elsewhere in the project does not block a save.
-    let proj = v4(r#"<include path="b.xml"/><include path="missing.xml"/>"#);
+    // An unrelated problem elsewhere in the project does not block a save:
+    // here another file lacks its BTCPP_format.
+    let proj = v4(r#"<include path="b.xml"/><include path="other.xml"/>"#);
     let b = tree_of("<AlwaysSuccess/>");
-    let mut files = Mem([("/p/proj.btproj", &proj), ("/p/b.xml", &b)]
-        .into_iter()
-        .map(|(k, v)| (PathBuf::from(k), v.as_bytes().to_vec()))
-        .collect());
+    let other = "<root><BehaviorTree ID=\"O\"><AlwaysSuccess/></BehaviorTree></root>";
+    let mut files = Mem([
+        ("/p/proj.btproj", proj.as_str()),
+        ("/p/b.xml", &b),
+        ("/p/other.xml", other),
+    ]
+    .into_iter()
+    .map(|(k, v)| (PathBuf::from(k), v.as_bytes().to_vec()))
+    .collect());
     let p = Project::load_from(std::path::Path::new("/p/proj.btproj"), &mut files).unwrap();
     assert!(p.write_reference(1, &ReferenceOptions::default()).is_ok());
     // ...but a problem in the document being saved does.
@@ -1212,11 +1218,22 @@ fn a_project_save_with_models_waits_for_every_include() {
             "{bad}"
         );
     }
-    // A tree that uses no model does not depend on the unresolved file.
+    // Even a tree whose block would be empty depends on the unresolved
+    // file: there it may find a model naming a built-in it uses.
     let proj = v4(r#"<include path="gone.xml"/><include path="t.xml"/>"#);
-    let t = tree_of("<AlwaysSuccess/>");
+    let t = tree_of("<Sequence><AlwaysSuccess/></Sequence>");
     let p = project(&[("/p/proj.btproj", &proj), ("/p/t.xml", &t)]);
-    assert!(p.write_reference(1, &ReferenceOptions::default()).is_ok());
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [
+            (
+                0,
+                DiagnosticKind::UnreadableInclude,
+                proj.find("<include").unwrap()
+            ),
+            (1, DiagnosticKind::NotInRecord, 0),
+        ]
+    );
 }
 
 #[test]
