@@ -710,3 +710,37 @@ fn a_file_rewritten_during_a_save_is_not_replaced() {
         fs::write(&path, content).unwrap();
     });
 }
+
+#[test]
+fn saves_follow_each_other_when_the_project_describes_its_models() {
+    // The reference writer drops a model's <description>, so the saved tree
+    // file's copy lacks it; the project still loads clean afterwards (#12).
+    let dir = scratch("cli-save-described");
+    copy_dir("reference/o-answers-2/in-o14-models", &dir);
+    let project = dir.join("proj.btproj");
+    let text = fs::read_to_string(&project).unwrap().replace(
+        "      <input_port name=\"p\"/>",
+        "      <description>moves the arm</description>\n      <input_port name=\"p\"/>",
+    );
+    assert!(text.contains("moves the arm"));
+    fs::write(&project, text).unwrap();
+    for (tree, want) in [
+        ("tree.xml", "reference/o-answers-2/out-o14/tree.xml"),
+        ("unused.xml", "reference/o-answers-2/out-o14/unused.xml"),
+    ] {
+        let out = run(&[
+            Path::new("save"),
+            &dir.join(tree),
+            Path::new("--reference"),
+            Path::new("--project"),
+            &project,
+        ]);
+        assert_eq!(out.status.code(), Some(0), "{tree}: {}", stderr(&out));
+        assert_eq!(
+            fs::read(dir.join(tree)).unwrap(),
+            fs::read(fixture(want)).unwrap()
+        );
+    }
+    let out = run(&[Path::new("check"), &project]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}

@@ -680,3 +680,63 @@ fn any_difference_in_a_redeclaration_is_reported() {
         );
     }
 }
+
+fn duplicates_between(first: &str, later: &str) -> Vec<DiagnosticKind> {
+    let main = root(&format!(
+        r#"<include path="t.xml"/><TreeNodesModel>{first}</TreeNodesModel>"#
+    ));
+    let t = root(&format!("<TreeNodesModel>{later}</TreeNodesModel>"));
+    let mut m = Mem::with(&[("/p/main.btproj", &main), ("/p/t.xml", &t)]);
+    let p = load(&mut m, "/p/main.btproj");
+    diags(&p)
+        .into_iter()
+        .filter(|(d, k, _)| *d == 1 && *k == DiagnosticKind::DuplicateModel)
+        .map(|(_, k, _)| k)
+        .collect()
+}
+
+#[test]
+fn the_written_copy_of_a_model_with_a_description_is_not_reported() {
+    // The reference writer drops the <description> (spec §2.4).
+    assert_eq!(
+        duplicates_between(
+            r#"<Action ID="M"><description>moves the arm</description><input_port name="a"/></Action>"#,
+            r#"<Action ID="M"><input_port name="a"/></Action>"#,
+        ),
+        []
+    );
+}
+
+#[test]
+fn content_recorded_only_by_name_is_always_reported() {
+    for (first, later) in [
+        // Description texts differ, and the view keeps neither.
+        (
+            r#"<Action ID="M"><description>moves the arm</description></Action>"#,
+            r#"<Action ID="M"><description>deletes the disk</description></Action>"#,
+        ),
+        // A description only in the later one: not a written copy.
+        (
+            r#"<Action ID="M"/>"#,
+            r#"<Action ID="M"><description>x</description></Action>"#,
+        ),
+        // Unrecognized attribute values differ.
+        (r#"<Action ID="M" foo="1"/>"#, r#"<Action ID="M" foo="2"/>"#),
+        // Even when they are the same.
+        (r#"<Action ID="M" foo="1"/>"#, r#"<Action ID="M" foo="1"/>"#),
+        (
+            r#"<Action ID="M"><input_port name="a" foo="1"/></Action>"#,
+            r#"<Action ID="M"><input_port name="a" foo="2"/></Action>"#,
+        ),
+        (
+            r#"<Action ID="M"><MetadataFields><Metadata k="1"/></MetadataFields></Action>"#,
+            r#"<Action ID="M"><MetadataFields><Metadata k="1"/></MetadataFields></Action>"#,
+        ),
+    ] {
+        assert_eq!(
+            duplicates_between(first, later),
+            [DiagnosticKind::DuplicateModel],
+            "{first} / {later}"
+        );
+    }
+}

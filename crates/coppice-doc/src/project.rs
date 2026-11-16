@@ -113,16 +113,27 @@ impl std::error::Error for LoadError {
     }
 }
 
-/// Whether two declarations of a model say the same thing: everything the
-/// view reads, except where each one is.
-fn same_model(a: &NodeModel, b: &NodeModel) -> bool {
-    NodeModel {
-        offset: 0,
-        ..a.clone()
-    } == NodeModel {
-        offset: 0,
-        ..b.clone()
-    }
+/// Whether `later` is what the reference writer writes for `first`: the
+/// same kind, `ID`, `editable` and ports (direction, name, type, default and
+/// description), without the `<description>` the writer drops (spec §2.4).
+/// A declaration holding anything the view records by name but not by value
+/// (a `<description>`'s text, unrecognized content) never matches, since
+/// two such declarations cannot be told apart.
+fn written_copy(first: &NodeModel, later: &NodeModel) -> bool {
+    let opaque = |m: &NodeModel| {
+        !m.unrecognized.is_empty() || m.ports.iter().any(|p| !p.unrecognized.is_empty())
+    };
+    // Equal after the projection, the two are opaque together or not at
+    // all, and `later` has no <description>.
+    !opaque(later)
+        && NodeModel {
+            offset: 0,
+            has_description: false,
+            ..first.clone()
+        } == NodeModel {
+            offset: 0,
+            ..later.clone()
+        }
 }
 
 /// A loaded project (spec §2.3.1).
@@ -525,10 +536,10 @@ impl Project {
             }
         }
 
-        // A model declared again in a later document, differently, reported
-        // at its first declaration in that document. An identical
-        // redeclaration is not reported: a tree file saved in reference
-        // mode repeats the project's models in its own block (spec §2.3.1).
+        // A model declared again in a later document, reported at its first
+        // declaration in that document, unless it is what the reference
+        // writer writes for the first: a tree file saved in reference mode
+        // repeats the project's models in its own block (spec §2.3.1).
         // Repeats within one document are already reported by that
         // document.
         let mut first_in: HashMap<String, (usize, NodeModel)> = HashMap::new();
@@ -539,7 +550,7 @@ impl Project {
                     continue;
                 }
                 match first_in.get(&m.id) {
-                    Some((_, model)) if same_model(model, &m) => {}
+                    Some((_, model)) if written_copy(model, &m) => {}
                     Some(&(first, _)) => push(
                         document,
                         DiagnosticKind::DuplicateModel,
