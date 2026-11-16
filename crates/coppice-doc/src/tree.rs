@@ -6,6 +6,8 @@
 //! the span model and never changes it, so the lossless round-trip (F5) is
 //! unaffected by anything here.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::parse::decode;
 use crate::{Document, Element, Node};
 
@@ -424,6 +426,12 @@ impl TreeDocument {
     /// (kinds, IDs, duplicates within the document, built-in shadowing) are
     /// unchanged.
     pub fn diagnostics_with_models(&self, models: &[NodeModel]) -> Vec<Diagnostic> {
+        self.diagnostics_with_lookup(&model_lookup(models))
+    }
+
+    /// As [`TreeDocument::diagnostics_with_models`], with the models
+    /// already indexed by `ID` (see [`model_lookup`]).
+    pub(crate) fn diagnostics_with_lookup(&self, models: &ModelLookup<'_>) -> Vec<Diagnostic> {
         let root = self.root();
         let mut out = Vec::new();
         if self.format().is_none() {
@@ -492,13 +500,14 @@ impl TreeDocument {
         }
         // Duplicate and shadowing declarations, from the parsed models.
         let own = self.models();
-        for (n, m) in own.iter().enumerate() {
-            if own[..n].iter().any(|earlier| earlier.id == m.id) {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for m in &own {
+            if !seen.insert(m.id.as_str()) {
                 out.push(Diagnostic {
                     kind: DiagnosticKind::DuplicateModel,
                     offset: m.offset,
                     message: format!(
-                        "model {} is declared more than once; the first is used",
+                        "model {} is declared more than once in this document; this later declaration is ignored",
                         m.id
                     ),
                 });
@@ -593,6 +602,18 @@ fn metadata_pairs(entry: &Element) -> Vec<(String, String)> {
     out
 }
 
+/// Models indexed by `ID`; for an `ID` listed more than once, the first.
+pub(crate) type ModelLookup<'a> = HashMap<&'a str, &'a NodeModel>;
+
+/// Index `models` by `ID`, keeping the first of each.
+pub(crate) fn model_lookup(models: &[NodeModel]) -> ModelLookup<'_> {
+    let mut map = HashMap::new();
+    for m in models {
+        map.entry(m.id.as_str()).or_insert(m);
+    }
+    map
+}
+
 fn is_builtin(name: &str) -> bool {
     BUILTIN_LEAVES.contains(&name) || BUILTIN_BRANCHES.contains(&name)
 }
@@ -601,7 +622,7 @@ fn is_builtin(name: &str) -> bool {
 /// nesting depth cannot exhaust the stack), reporting `LeafWithChildren`,
 /// `UnknownPort` and `MisplacedNodeId` as the library's loader would decide
 /// them (spec §2.5, §3.6; BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`).
-fn walk(tree: &Element, models: &[NodeModel], out: &mut Vec<Diagnostic>) {
+fn walk(tree: &Element, models: &ModelLookup<'_>, out: &mut Vec<Diagnostic>) {
     let mut stack: Vec<&Element> = tree.child_elements().collect();
     stack.reverse();
     while let Some(element) = stack.pop() {
@@ -612,7 +633,7 @@ fn walk(tree: &Element, models: &[NodeModel], out: &mut Vec<Diagnostic>) {
     }
 }
 
-fn check_node(element: &Element, models: &[NodeModel], out: &mut Vec<Diagnostic>) {
+fn check_node(element: &Element, models: &ModelLookup<'_>, out: &mut Vec<Diagnostic>) {
     if element.name == "SubTree" || element.name == "SubTreePlus" {
         return;
     }
@@ -644,7 +665,7 @@ fn check_node(element: &Element, models: &[NodeModel], out: &mut Vec<Diagnostic>
     let declared = if is_builtin(type_name) {
         None
     } else {
-        models.iter().find(|m| m.id == type_name)
+        models.get(type_name).copied()
     };
     let leaf = BUILTIN_LEAVES.contains(&type_name) || declared.is_some_and(|m| m.kind.is_leaf());
     if leaf && element.child_elements().next().is_some() {

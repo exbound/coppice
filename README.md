@@ -27,8 +27,9 @@ The enumerated feature set (F1–F16) and each feature's coverage triplet
 far, in `crates/coppice-doc`: F1, F2 and F4 (parsing a tree or project
 file in either dialect into a span-preserving model, with a behavior-tree
 view of root attributes, includes, trees and node models), F5 (lossless
-round-trip), and the single-document half of F10 (dialect suggestion and
-diagnostics). Loading a project with its included files (F3) is next. The
+round-trip), F3 (loading a project with its included files, resolved as
+BehaviorTree.CPP resolves them), and F10's diagnostics on a document or a
+whole project. The
 `coppice` binary answers only `--version`.
 
 ## Build and test

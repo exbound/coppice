@@ -1,11 +1,13 @@
 //! A project: a starting document and every document its includes reach
 //! (spec §2.3, §2.3.1; F3), with the checks that need all of them at once.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::tree::{Diagnostic, DiagnosticKind, NodeModel, NotATreeDocument, TreeDocument};
+use crate::tree::{
+    Diagnostic, DiagnosticKind, NodeModel, NotATreeDocument, TreeDocument, model_lookup,
+};
 use crate::{Document, Element, ParseError};
 
 /// Where a project's files come from.
@@ -302,10 +304,11 @@ impl Project {
     /// The `<TreeNodesModel>` entries of every document, merged in load
     /// order; for an `ID` declared more than once, the first declaration.
     pub fn models(&self) -> Vec<NodeModel> {
+        let mut seen: HashSet<String> = HashSet::new();
         let mut out: Vec<NodeModel> = Vec::new();
         for d in &self.documents {
             for m in d.tree.models() {
-                if !out.iter().any(|o| o.id == m.id) {
+                if seen.insert(m.id.clone()) {
                     out.push(m);
                 }
             }
@@ -315,7 +318,8 @@ impl Project {
 
     /// The registered trees, by `ID` in byte order of the name (as the
     /// library lists them), each resolved to the registration that wins.
-    /// A `<BehaviorTree>` without an `ID` is not listed.
+    /// A `<BehaviorTree>` without an `ID` is not listed (the library names
+    /// it `BehaviorTree_<n>`; coppice does not).
     pub fn trees(&self) -> Vec<ProjectTree<'_>> {
         self.registry().into_values().collect()
     }
@@ -360,6 +364,7 @@ impl Project {
     /// wrong with includes, and the checks that need every document.
     pub fn diagnostics(&self) -> Vec<ProjectDiagnostic> {
         let models = self.models();
+        let lookup = model_lookup(&models);
         let mut out = self.include_diagnostics.clone();
         let mut push = |document, kind, offset, message| {
             out.push(ProjectDiagnostic {
@@ -373,7 +378,7 @@ impl Project {
         };
 
         for (document, d) in self.documents.iter().enumerate() {
-            for diagnostic in d.tree.diagnostics_with_models(&models) {
+            for diagnostic in d.tree.diagnostics_with_lookup(&lookup) {
                 push(
                     document,
                     diagnostic.kind,
@@ -383,24 +388,30 @@ impl Project {
             }
         }
 
-        // A model declared again in a later document. Repeats within one
-        // document are already reported by that document.
+        // A model declared again in a later document, reported at its first
+        // declaration in that document. Repeats within one document are
+        // already reported by that document.
+        let mut first_in: HashMap<String, usize> = HashMap::new();
         for (document, d) in self.documents.iter().enumerate() {
+            let mut here: HashSet<String> = HashSet::new();
             for m in d.tree.models() {
-                if let Some(first) = self.documents[..document]
-                    .iter()
-                    .find(|earlier| earlier.tree.models().iter().any(|e| e.id == m.id))
-                {
-                    push(
+                if !here.insert(m.id.clone()) {
+                    continue;
+                }
+                match first_in.get(&m.id) {
+                    Some(&first) => push(
                         document,
                         DiagnosticKind::DuplicateModel,
                         m.offset,
                         format!(
                             "model {} is already declared in {}; that one is used",
                             m.id,
-                            first.path.display()
+                            self.documents[first].path.display()
                         ),
-                    );
+                    ),
+                    None => {
+                        first_in.insert(m.id, document);
+                    }
                 }
             }
         }

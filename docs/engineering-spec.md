@@ -164,19 +164,35 @@ What the library decides, and coppice mirrors (BT 4.9.0
   library (`:339-347`); coppice reports `UnreadableInclude` or
   `MalformedInclude`. A file whose top-level element is not `<root>` is
   `MalformedInclude` too.
-- Trees are registered by `ID` after the file's own includes are loaded,
-  and a later registration of an `ID` replaces the earlier one (`:444-458`).
+- Trees are registered by `ID` after the file's own includes are loaded
+  (`:365-426` precede the registration), and a later registration of an
+  `ID` replaces the earlier one (`:444-458`).
   So a file's own trees win over its includes' trees, and a later include
   wins over an earlier sibling. coppice reports each replacement
   (`DuplicateTree`, at the replacing tree) and resolves the name as the
   library does.
 - `main_tree_to_execute` is read from the starting file's `<root>`
   (`:700-718`). A name that no tree has is reported (`UnknownMainTree`).
-- A `<SubTree ID>` (and the v3 `<SubTreePlus ID>`) naming no tree in the
-  project fails when the library instantiates it (`:1195-1199`); coppice
-  reports it (`UnknownSubTree`).
+  Without the attribute, the library needs exactly one tree unless the
+  caller names one (`:710-718`); coppice does not report that, since a
+  project file usually holds many trees and the caller usually names one.
+- A `<SubTree ID>` naming no tree in the project fails when the library
+  instantiates it (`:1195-1199`); coppice reports it (`UnknownSubTree`),
+  in every tree, including one that a later registration replaces.
 
-What the library leaves undefined, and coppice decides:
+What the library leaves undefined or does differently, and coppice
+decides:
+
+- **The starting path** is made absolute against the current directory.
+  The library takes `absolute(parent_path())` of it (`:294`), which throws
+  under libstdc++ for a bare file name (`main.xml`, empty parent) but not
+  for `./main.xml`; coppice loads both.
+- **`<SubTreePlus ID>`** (v3) naming no tree is reported like `<SubTree>`
+  (`UnknownSubTree`). The 4.9.0 library registers no `SubTreePlus` node, so
+  this follows the v3 dialect (§2.2), not the library.
+- **A tree without an `ID`** is not listed or resolvable by name. The
+  library names it `BehaviorTree_<n>` with a counter (`:449-456`); coppice
+  does not mirror that name.
 
 - **Cycles.** The library has no cycle check, so a file that includes
   itself, directly or through others, recurses until it fails. coppice

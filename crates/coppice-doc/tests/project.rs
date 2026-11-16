@@ -558,3 +558,49 @@ fn a_long_chain_of_includes_does_not_exhaust_the_stack() {
     let p = load(&mut m, "/c/0.xml");
     assert_eq!(p.documents().len(), N);
 }
+
+#[test]
+fn a_model_repeated_within_a_later_document_is_reported_once_per_declaration() {
+    let main = root(r#"<include path="t.xml"/><TreeNodesModel><Action ID="M"/></TreeNodesModel>"#);
+    let t = root(r#"<TreeNodesModel><Action ID="M"/><Condition ID="M"/></TreeNodesModel>"#);
+    let mut m = Mem::with(&[("/p/main.btproj", &main), ("/p/t.xml", &t)]);
+    let p = load(&mut m, "/p/main.btproj");
+    // The first M in t.xml repeats the project file's; the second repeats
+    // the first within t.xml. One diagnostic each.
+    assert_eq!(
+        diags(&p),
+        [
+            (1, DiagnosticKind::DuplicateModel, at(&t, "<Action")),
+            (1, DiagnosticKind::DuplicateModel, at(&t, "<Condition")),
+        ]
+    );
+}
+
+#[test]
+fn diagnostics_scale_linearly_with_documents_models_and_nodes() {
+    // Each file declares a model, uses the previous file's model and
+    // includes the next one. A quadratic pass over documents or models
+    // takes minutes here; a linear one, well under a second.
+    const N: usize = 20_000;
+    let mut m = Mem::default();
+    for i in 0..N {
+        let mut body = format!(
+            r#"<TreeNodesModel><Action ID="M{i}"><input_port name="p"/></Action></TreeNodesModel><BehaviorTree ID="T{i}"><M{prev} p="1"/></BehaviorTree>"#,
+            prev = i.saturating_sub(1)
+        );
+        if i + 1 < N {
+            body.push_str(&format!(r#"<include path="{}.xml"/>"#, i + 1));
+        }
+        m.files.insert(
+            PathBuf::from(format!("/c/{i}.xml")),
+            root(&body).into_bytes(),
+        );
+    }
+    let p = load(&mut m, "/c/0.xml");
+    let started = std::time::Instant::now();
+    let d = p.diagnostics();
+    let took = started.elapsed();
+    assert_eq!(d, []);
+    assert_eq!(p.models().len(), N);
+    assert!(took.as_secs() < 20, "diagnostics took {took:?}");
+}
