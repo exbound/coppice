@@ -57,11 +57,11 @@ list.
 | F3 | Parse `.btproj` projects and resolve `<include>` | C3 | yes (surface §3, dossier WP1) | yes — `project.rs`: the library's include resolution, plus coppice's handling of cycles and of a file reached twice (§2.3.1) | partial — self-authored on-disk fixtures (`tests/fixtures/project/`) and in-memory file sets, `crates/coppice-doc/tests/project.rs`; resolution is checked against the library's source, not run against the library or the reference | §2.3 |
 | F4 | Parse `<TreeNodesModel>`, including tolerated extensions | C3 | yes (surface §3) | yes — kinds, ports, `editable`, `<description>`, metadata, merged blocks | partial — self-authored and reference fixtures | §2.4 |
 | F5 | Lossless save (coppice's default): load then save unmodified, byte-identical | C3 | n/a — the reference has no lossless save (answers O-9); this is coppice's own guarantee | yes | partial — byte-exact over the self-authored fixture set plus the one-byte negative control | §3.1 |
-| F6 | Reference save of a tree file (`--reference`): the canonical writer | C3 | yes (answers, canonical style; O-10, O-13, O-14, O-16), except attributes other than `name` and ports, built-in port lists and order, and some root and include cases (O-17) | none | none | §3.2 |
-| F7 | Reference save in V3 mode | C3 | yes (answers O-12: the V4 writer, no stamp) | none | none | §3.5 |
+| F6 | Reference save of a tree file (`--reference`): the canonical writer | C3 | yes (answers, canonical style; O-10, O-13, O-14, O-16), except attributes other than `name` and ports, built-in port lists and order, and some root and include cases (O-17) | yes: `reference.rs`, with the refusals of §3.7 | partial: the F6 rows of §8, byte-exact against the reference's output (`crates/coppice-doc/tests/reference.rs`) | §3.2 |
+| F7 | Reference save in V3 mode | C3 | yes (answers O-12: the V4 writer, no stamp) | yes: V3 mode of the same writer | partial: the one F7 row of §8, byte-exact | §3.5 |
 | F8 | Reference project export | C3 | partial: the project file's layout, models, stamp and include order (answers O-1, O-2, O-4, O-6, O-11, O-14, O-16); which tree files are written and how include paths are rewritten differs between the two recorded sessions (O-18) | none | none | §3.3 |
-| F9 | Reference save-as of a standalone tree: a bare canonical tree | C3 | yes (answers O-5, O-13) | none | none | §3.4 |
-| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Across a project (F3, §2.3.1): nodes checked against the project's merged models, plus include problems, replaced trees, an unknown main tree and subtrees that name no tree. Not yet on logs or the monitor tree | partial — the first set's F10 reference fixtures (the leaf-with-child trees) and inline inputs; the second set's leaf-with-child inputs; its two unknown-port inputs (a built-in `Script` attribute) wait on the built-in port lists, taken from the library source (§3.2 rule 6, §3.6) | §2.5, §3.6 |
+| F9 | Reference save-as of a standalone tree: a bare canonical tree | C3 | yes (answers O-5, O-13) | yes: the same writer, with the file's own models | partial: the F9 rows of §8, byte-exact | §3.4 |
+| F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Across a project (F3, §2.3.1): nodes checked against the project's merged models, plus include problems, replaced trees, an unknown main tree and subtrees that name no tree. Not yet on logs or the monitor tree | partial — the first set's F10 reference fixtures (the leaf-with-child trees) and inline inputs; the second set's leaf-with-child inputs; and its two unknown-port inputs (a built-in `Script` attribute), checked against the built-in port lists taken from the library source (`tests/reference.rs`) | §2.5, §3.6 |
 | F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | none | none | §4.1 |
 | F12 | Write `.btlog` | C2 | yes (surface §1) | none | none | §4.2 |
 | F13 | Monitor client: connect, FULLTREE, STATUS polling, heartbeat | C6 | yes (surface §2, dossier G-4/G-5) | none | none | §5.1–5.4 |
@@ -565,14 +565,51 @@ behaviors; answers O-1, O-10, O-13):
 
 coppice parses all three (parsing never instantiates, §2.5) and reports a
 diagnostic: `LeafWithChildren`, `UnknownPort` and `ModelShadowsBuiltin`.
-Today `UnknownPort` covers declared models only, and
-`ModelShadowsBuiltin` fires only on a leafness mismatch (§2.5). Reporting
-an unknown port on a built-in, and a declaration whose ports differ from
-the built-in's, needs the built-in port lists. coppice takes them from
-the library source (for `Script`, BT 4.9.0
-`include/behaviortree_cpp/actions/script_node.h:46`: `code` only), and
-that comes with F6. A reference-mode save of any input the reference refuses is
+`UnknownPort` covers declared models and built-ins: coppice takes the
+built-in port lists from the library source (`BUILTIN_PORTS`; for
+`Script`, BT 4.9.0 `include/behaviortree_cpp/actions/script_node.h:46`:
+`code` only). `ModelShadowsBuiltin` fires only on a leafness mismatch, as
+the library decides (§2.5); a used declaration of a built-in is refused by
+the writer instead (§3.7). A reference-mode save of any input the reference refuses is
 refused.
+
+### 3.7 What coppice's reference writer refuses (F6, F7, F9)
+
+The reference writer's output is either the reference's bytes or nothing:
+where the record does not say what the reference writes, coppice refuses
+the save and names the case (`NotInRecord`), rather than guessing. It
+refuses:
+
+- **any input with a diagnostic** (§2.5, §2.3.1): the inputs the reference
+  refuses to load (§3.6) are among them, and a missing format, a malformed
+  model block or a duplicate are not covered;
+- a **stamp newer than the target** (`NewerStamp`, §3.2), and a stamp or
+  target that is not `MAJOR.MINOR`;
+- a `BTCPP_format` other than `4` in V4 mode or `3` in V3 mode, and a
+  stamp in V3 mode;
+- a root attribute other than `BTCPP_format`, `BTCPP_version` and
+  `project_name`; a root child other than `<BehaviorTree>` and
+  `<TreeNodesModel>` (an `<include>`, an unknown element); a
+  `<BehaviorTree>` without an `ID` or with another attribute (O-17 c, d);
+- the explicit `<Action|Condition|Control|Decorator ID="…">` form; an
+  attribute that is neither `name` nor a port name (a reserved attribute
+  such as `_skipIf`); a subtree node with an attribute other than `ID`
+  (O-17 a, b);
+- a subtree whose `ID` has a declared `SubTree` model (O-17 f);
+- a used declared model with a port `default`, port description text or
+  `<MetadataFields>` (O-17 e); a declared model, used, whose `ID` is a
+  built-in's (O-17 i);
+- an attribute value containing a tab or a line break;
+- in V4 mode, a node type that is neither built in nor declared
+  (`UndeclaredNode`, §3.5);
+- in V3 mode: a v4 built-in the record does not place (only `Sequence`,
+  `SetBlackboard` and `SubTree` are shown built in, and `Script` shown not
+  built in); and an undeclared node type that has children or is used
+  with different attributes (O-17 h).
+
+What the writer changed that the reference would have announced in a
+prompt is returned as a note: a raised stamp (`StampRaised`) and a model
+created by the V3 importer defaults (`ModelCreated`).
 
 ## 4. Recordings — `.btlog` (F11, F12)
 

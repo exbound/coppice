@@ -11,6 +11,7 @@
 
 mod parse;
 mod project;
+mod reference;
 mod tree;
 
 use std::ops::Range;
@@ -19,10 +20,11 @@ pub use parse::{MAX_DEPTH, ParseError};
 pub use project::{
     Disk, Files, LoadError, Project, ProjectDiagnostic, ProjectDocument, ProjectTree,
 };
+pub use reference::{ReferenceOptions, WriteMode, Written, write_tree};
 pub use tree::{
-    BUILTIN_BRANCHES, BUILTIN_LEAVES, Diagnostic, DiagnosticKind, Dialect, Include, ModelKind,
-    NodeModel, NotATreeDocument, Port, PortDirection, RESERVED_ATTRIBUTES, TreeDocument,
-    is_port_name,
+    BUILTIN_BRANCHES, BUILTIN_LEAVES, BUILTIN_PORTS, Diagnostic, DiagnosticKind, Dialect, Include,
+    ModelKind, NodeModel, NotATreeDocument, Port, PortDirection, RESERVED_ATTRIBUTES, TreeDocument,
+    builtin_ports, is_port_name,
 };
 
 /// A byte range into [`Document::source`].
