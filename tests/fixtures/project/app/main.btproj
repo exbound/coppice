@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" project_name="Fixture" main_tree_to_execute="A">
+  <include path="trees/a.xml"/>
+  <include path="../shared/common.xml"/>
+  <TreeNodesModel>
+    <Action ID="Greet">
+      <input_port name="who"/>
+    </Action>
+  </TreeNodesModel>
+</root>
