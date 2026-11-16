@@ -33,7 +33,7 @@ test:
 # 4.9.0 tree to build without downloading.
 [doc("Build the BehaviorTree.CPP harness and test .btlog against its output")]
 oracle:
-    cmake -S tests/harness -B target/harness -DCMAKE_BUILD_TYPE=Release {{ if env("BTCPP_SOURCE_DIR", "") != "" { "-DFETCHCONTENT_SOURCE_DIR_BEHAVIORTREE_CPP=" + env("BTCPP_SOURCE_DIR") } else { "" } }}
+    cmake -S tests/harness -B target/harness -DCMAKE_BUILD_TYPE=Release "-DFETCHCONTENT_SOURCE_DIR_BEHAVIORTREE_CPP=${BTCPP_SOURCE_DIR:-}"
     cmake --build target/harness --parallel
     rm -rf target/btlog-oracle
     target/harness/btlog_harness target/btlog-oracle

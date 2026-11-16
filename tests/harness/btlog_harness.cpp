@@ -36,7 +36,8 @@ namespace fs = std::filesystem;
 
 // The logger takes T0 from system_clock and transition times from
 // high_resolution_clock; the oracle assumes they are one clock, counting
-// nanoseconds.
+// nanoseconds, as in GCC's libstdc++. Other standard libraries may not
+// compile this harness.
 static_assert(std::is_same_v<std::chrono::high_resolution_clock, std::chrono::system_clock>);
 static_assert(std::is_same_v<BT::Duration::period, std::nano>);
 

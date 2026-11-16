@@ -44,7 +44,6 @@ jobs:
         with:
           path: target/harness
           key: btcpp-4.9.0-${{ runner.os }}-${{ hashFiles('tests/harness/**') }}
-          restore-keys: btcpp-4.9.0-${{ runner.os }}-
 
       - name: Oracle
         run: just oracle

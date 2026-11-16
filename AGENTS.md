@@ -133,6 +133,6 @@ docs/setup.md              contributor toolchain setup (kept separate from the
 crates/                    implementation: a Rust workspace (see docs/design-decisions.md D2)
 tests/fixtures/            shared fixtures (see tests/fixtures/README.md); each crate's
                            tests live in crates/<crate>/tests/
-tests/harness/             the BehaviorTree.CPP test harness (design decision D8; not yet built)
-.github/workflows/ci.yml   runs `just check` and `just test`
+tests/harness/             the BehaviorTree.CPP test harness (design decision D8): `just oracle`
+.github/workflows/ci.yml   runs `just check` and `just test`, and `just oracle` in its own job
 ```
