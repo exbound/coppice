@@ -12,6 +12,10 @@ dependencies = [
 [[package]]
 name = "coppice-cli"
 version = "0.0.0"
+dependencies = [
+ "coppice-btlog",
+ "coppice-doc",
+]
 
 [[package]]
 name = "coppice-doc"

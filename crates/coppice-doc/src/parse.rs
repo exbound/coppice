@@ -67,6 +67,20 @@ pub enum ParseError {
     },
 }
 
+impl ParseError {
+    /// The byte offset the error names.
+    pub fn offset(&self) -> usize {
+        match self {
+            ParseError::NotUtf8 { offset }
+            | ParseError::Malformed { offset, .. }
+            | ParseError::Unsupported { offset, .. }
+            | ParseError::MismatchedEndTag { offset, .. }
+            | ParseError::UnclosedElement { offset, .. }
+            | ParseError::TopLevelElementCount { offset, .. } => *offset,
+        }
+    }
+}
+
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
