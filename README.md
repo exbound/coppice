@@ -29,8 +29,11 @@ file in either dialect into a span-preserving model, with a behavior-tree
 view of root attributes, includes, trees and node models), F5 (lossless
 round-trip), F3 (loading a project with its included files, following
 BehaviorTree.CPP's include rules as read from its source, with the
-departures listed in the spec's §2.3.1), and part of F10 (dialect
-suggestion and diagnostics, on a document or a whole project). The
+departures listed in the spec's §2.3.1), F6, F7 and F9 (the reference
+writer: a tree file written byte for byte as the reference writes it, in
+V4 or V3 mode, refusing what the research record does not cover), and part
+of F10 (dialect suggestion and diagnostics, on a document or a whole
+project). The
 `coppice` binary answers only `--version`.
 
 ## Build and test

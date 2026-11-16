@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::reference::{ReferenceOptions, Written, write_parts};
 use crate::tree::{
     Diagnostic, DiagnosticKind, NodeModel, NotATreeDocument, TreeDocument, model_lookup,
 };
@@ -372,6 +373,114 @@ impl Project {
             }),
             _ => None,
         }
+    }
+
+    /// Write document `document` as the reference writes a tree file
+    /// saved through this project (spec §3.2), with the project's merged
+    /// models.
+    ///
+    /// Refuses, besides what [`crate::write_tree`] refuses (spec §3.7):
+    /// - any diagnostic of this project in that document, project-level
+    ///   ones included (a subtree that names no tree);
+    /// - any model diagnostic in any document, since the merged models
+    ///   fill the model block;
+    /// - any save while an include is unresolved, as the unreadable file
+    ///   may declare a model the save depends on.
+    ///
+    /// A refusal about a declared model points into the document that
+    /// declared it.
+    ///
+    /// # Panics
+    ///
+    /// If `document` is not an index into [`Project::documents`].
+    pub fn write_reference(
+        &self,
+        document: usize,
+        options: &ReferenceOptions,
+    ) -> Result<Written, Vec<ProjectDiagnostic>> {
+        let d = &self.documents[document];
+        let all = self.diagnostics();
+        let blocking: Vec<ProjectDiagnostic> = all
+            .iter()
+            .filter(|p| {
+                p.document == document
+                    || matches!(
+                        p.diagnostic.kind,
+                        DiagnosticKind::UnknownModelKind
+                            | DiagnosticKind::IncompleteModel
+                            | DiagnosticKind::DuplicateModelsBlock
+                            | DiagnosticKind::DuplicateModel
+                            | DiagnosticKind::ModelShadowsBuiltin
+                    )
+            })
+            .cloned()
+            .collect();
+        if !blocking.is_empty() {
+            return Err(blocking);
+        }
+        // Which document each merged model came from: the first to declare
+        // its ID, as `models` merges.
+        let mut origin: HashMap<String, usize> = HashMap::new();
+        for (i, doc) in self.documents.iter().enumerate() {
+            for m in doc.tree.models() {
+                origin.entry(m.id).or_insert(i);
+            }
+        }
+        let written = write_parts(&d.tree, &self.models(), options).map_err(|r| {
+            let mut out: Vec<ProjectDiagnostic> = r
+                .tree
+                .into_iter()
+                .map(|diagnostic| ProjectDiagnostic {
+                    document,
+                    diagnostic,
+                })
+                .collect();
+            out.extend(
+                r.models
+                    .into_iter()
+                    .map(|(id, diagnostic)| ProjectDiagnostic {
+                        document: origin.get(&id).copied().unwrap_or(document),
+                        diagnostic,
+                    }),
+            );
+            out.sort_by_key(|p| (p.document, p.diagnostic.offset));
+            out
+        })?;
+        let unresolved: Vec<ProjectDiagnostic> = all
+            .into_iter()
+            .filter(|p| {
+                matches!(
+                    p.diagnostic.kind,
+                    DiagnosticKind::UnreadableInclude
+                        | DiagnosticKind::MalformedInclude
+                        | DiagnosticKind::RosPackageInclude
+                        | DiagnosticKind::IncompleteInclude
+                )
+            })
+            .collect();
+        // An unreadable file may declare a model this save depends on: one
+        // the block holds (a duplicate the project would then refuse, or
+        // the declaration that would win), the one the V3 importer would
+        // otherwise create, or one naming a built-in or subtree node,
+        // which the writer refuses when it can see it. Even an empty block
+        // depends on it, so any unresolved include blocks the save.
+        if !unresolved.is_empty() {
+            let mut out = unresolved;
+            out.push(ProjectDiagnostic {
+                document,
+                diagnostic: Diagnostic {
+                    kind: DiagnosticKind::NotInRecord,
+                    offset: d.tree.document().root_element().span.start,
+                    message: format!(
+                        "an include is unresolved, and a model this save depends on may be declared there (the block holds [{}])",
+                        written.models.join(", ")
+                    ),
+                },
+            });
+            out.sort_by_key(|p| (p.document, p.diagnostic.offset));
+            return Err(out);
+        }
+        Ok(written)
     }
 
     /// Everything worth reporting across the project, sorted by document

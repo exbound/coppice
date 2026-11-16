@@ -68,6 +68,11 @@ pub struct Port {
     /// The element's text content with references decoded: the port's
     /// description. Empty when there is none.
     pub description: String,
+    /// What this view does not model: attributes other than `name`, `type`
+    /// and a non-empty `default` (so an empty `default` is listed), child
+    /// elements, CDATA and processing instructions, each described in a few
+    /// words. (CDATA also counts toward `description`.)
+    pub unrecognized: Vec<String>,
 }
 
 /// One entry of a `<TreeNodesModel>` block (spec §2.4).
@@ -87,6 +92,12 @@ pub struct NodeModel {
     pub metadata: Vec<(String, String)>,
     /// Byte offset of the entry element in its document's source.
     pub offset: usize,
+    /// What this view does not model: attributes other than `ID` and
+    /// `editable="true"` (so `editable="false"` is listed), child elements
+    /// other than ports and `<description>` (so `<MetadataFields>`, which
+    /// `metadata` reads, is listed too), text, CDATA and processing
+    /// instructions, each described in a few words.
+    pub unrecognized: Vec<String>,
 }
 
 /// One `<include>` of a document (spec §2.3).
@@ -150,6 +161,21 @@ pub enum DiagnosticKind {
     /// A `<SubTree>` or `<SubTreePlus>` whose `ID` names no tree of the
     /// project.
     UnknownSubTree,
+    /// The reference writer cannot write this: what the reference writes
+    /// for it is not in the research record (spec §3.7).
+    NotInRecord,
+    /// The writer refuses a `BTCPP_version` newer than its target, which
+    /// the reference never lowers (spec §3.2, *Version stamp*).
+    NewerStamp,
+    /// In V4 mode, a node type that is neither built in nor declared
+    /// (spec §3.5).
+    UndeclaredNode,
+    /// A note, not a refusal: the writer raised an older `BTCPP_version`
+    /// to its target.
+    StampRaised,
+    /// A note, not a refusal: in V3 mode, the writer created the model
+    /// the reference's importer would (spec §3.5).
+    ModelCreated,
 }
 
 /// A condition worth reporting, at a byte offset in the source.
@@ -239,6 +265,65 @@ pub const BUILTIN_BRANCHES: &[&str] = &[
     "SkipUnlessUpdated",
     "WaitValueUpdate",
 ];
+
+/// The ports of each built-in node that declares any, in the order the
+/// library source lists them (BT 4.9.0 `include/behaviortree_cpp/actions/`,
+/// `controls/` and `decorators/`, each node's `providedPorts`; the constant
+/// names resolved from `parallel_node.h:82-83`, `retry_node.h:66` and
+/// `repeat_node.h:60`; the `Switch<N>` ports from `switch_node.h:95-106`).
+/// The library keeps ports in an unordered map, so this order is the
+/// source's, not the library's at run time (spec §3.2 rule 6). `SubTree`
+/// is left out: its port `_autoremap` is reserved, and its other
+/// attributes are remappings, not ports. A built-in not listed here
+/// declares no ports.
+pub const BUILTIN_PORTS: &[(&str, &[&str])] = &[
+    ("Script", &["code"]),
+    ("ScriptCondition", &["code"]),
+    ("SetBlackboard", &["value", "output_key"]),
+    ("UnsetBlackboard", &["key"]),
+    ("WasEntryUpdated", &["entry"]),
+    ("SkipUnlessUpdated", &["entry"]),
+    ("WaitValueUpdate", &["entry"]),
+    ("Sleep", &["msec"]),
+    ("Delay", &["delay_msec"]),
+    ("Timeout", &["msec"]),
+    ("Repeat", &["num_cycles"]),
+    ("RetryUntilSuccessful", &["num_attempts"]),
+    ("RunOnce", &["then_skip"]),
+    ("Precondition", &["if", "else"]),
+    ("TryCatch", &["catch_on_halt"]),
+    ("Parallel", &["success_count", "failure_count"]),
+    ("ParallelAll", &["max_failures"]),
+    ("LoopInt", &["queue", "if_empty", "value"]),
+    ("LoopBool", &["queue", "if_empty", "value"]),
+    ("LoopDouble", &["queue", "if_empty", "value"]),
+    ("LoopString", &["queue", "if_empty", "value"]),
+    ("Switch2", &["variable", "case_1", "case_2"]),
+    ("Switch3", &["variable", "case_1", "case_2", "case_3"]),
+    (
+        "Switch4",
+        &["variable", "case_1", "case_2", "case_3", "case_4"],
+    ),
+    (
+        "Switch5",
+        &["variable", "case_1", "case_2", "case_3", "case_4", "case_5"],
+    ),
+    (
+        "Switch6",
+        &[
+            "variable", "case_1", "case_2", "case_3", "case_4", "case_5", "case_6",
+        ],
+    ),
+];
+
+/// The ports of built-in node `name`, in source order; empty for a
+/// built-in that declares none (and for a name that is not a built-in).
+pub fn builtin_ports(name: &str) -> &'static [&'static str] {
+    BUILTIN_PORTS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map_or(&[], |(_, ports)| ports)
+}
 
 /// The attribute names BehaviorTree.CPP reserves: never ports (BT 4.9.0
 /// `include/behaviortree_cpp/tree_node.h:78-94`,
@@ -381,6 +466,26 @@ impl TreeDocument {
                             .filter(|s| !s.is_empty())
                             .map(str::to_owned),
                         description: port_description(doc, port),
+                        unrecognized: port
+                            .attributes
+                            .iter()
+                            .filter(|a| match a.name.as_str() {
+                                "name" | "type" => false,
+                                // An empty default is not modelled (`default`
+                                // is `None`), so it is listed here.
+                                "default" => a.value.is_empty(),
+                                _ => true,
+                            })
+                            .map(|a| format!("attribute {}", a.name))
+                            .chain(port.children.iter().filter_map(|c| match c {
+                                Node::Element(c) => Some(format!("element <{}>", c.name)),
+                                Node::CData(_) => Some("CDATA".to_owned()),
+                                Node::ProcessingInstruction(_) => {
+                                    Some("a processing instruction".to_owned())
+                                }
+                                _ => None,
+                            }))
+                            .collect(),
                     });
                 }
                 out.push(NodeModel {
@@ -391,6 +496,7 @@ impl TreeDocument {
                     has_description: entry.child_elements().any(|c| c.name == "description"),
                     metadata: metadata_pairs(entry),
                     offset: entry.span.start,
+                    unrecognized: entry_unrecognized(doc, entry),
                 });
             }
         }
@@ -586,6 +692,34 @@ fn port_description(doc: &Document, port: &Element) -> String {
     out
 }
 
+/// What a model entry holds that [`NodeModel`] does not model.
+fn entry_unrecognized(doc: &Document, entry: &Element) -> Vec<String> {
+    let mut out = Vec::new();
+    for a in &entry.attributes {
+        let known = a.name == "ID" || (a.name == "editable" && a.value == "true");
+        if !known {
+            out.push(format!("attribute {}=\"{}\"", a.name, a.value));
+        }
+    }
+    for child in &entry.children {
+        match child {
+            Node::Element(c) => {
+                if !matches!(
+                    c.name.as_str(),
+                    "input_port" | "output_port" | "inout_port" | "description"
+                ) {
+                    out.push(format!("element <{}>", c.name));
+                }
+            }
+            Node::Text(span) if !doc.text(span).trim().is_empty() => out.push("text".to_owned()),
+            Node::CData(_) => out.push("CDATA".to_owned()),
+            Node::ProcessingInstruction(_) => out.push("a processing instruction".to_owned()),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// The `<MetadataFields>` key/value pairs, in source order.
 fn metadata_pairs(entry: &Element) -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -614,7 +748,7 @@ pub(crate) fn model_lookup(models: &[NodeModel]) -> ModelLookup<'_> {
     map
 }
 
-fn is_builtin(name: &str) -> bool {
+pub(crate) fn is_builtin(name: &str) -> bool {
     BUILTIN_LEAVES.contains(&name) || BUILTIN_BRANCHES.contains(&name)
 }
 
@@ -677,11 +811,34 @@ fn check_node(element: &Element, models: &ModelLookup<'_>, out: &mut Vec<Diagnos
             ),
         });
     }
+    if declared.is_none() && is_builtin(type_name) {
+        // The library refuses, when it builds the tree, an attribute that
+        // is a valid port name but not a port of the registered type (BT
+        // 4.9.0 `src/xml_parsing.cpp:805-819`); so does the reference
+        // (spec §3.6). `SubTree` returned above.
+        let ports = builtin_ports(type_name);
+        for a in &element.attributes {
+            if !is_port_name(&a.name) {
+                continue;
+            }
+            if ports.contains(&a.name.as_str()) {
+                continue;
+            }
+            out.push(Diagnostic {
+                kind: DiagnosticKind::UnknownPort,
+                offset: a.name_span.start,
+                message: format!(
+                    "attribute '{}' is not a port of the built-in node {type_name}",
+                    a.name
+                ),
+            });
+        }
+    }
     if let Some(m) = declared
         && m.kind != ModelKind::SubTree
     {
         for a in &element.attributes {
-            if (explicit && a.name == "ID") || !is_port_name(&a.name) {
+            if !is_port_name(&a.name) {
                 continue;
             }
             if m.ports.iter().any(|p| p.name == a.name) {
