@@ -265,3 +265,42 @@ fn log_dump_prints_what_it_read_before_an_error() {
     assert_eq!(out.status.code(), Some(1));
     assert!(out.stdout.is_empty());
 }
+
+#[test]
+fn a_reference_save_reports_what_it_changed() {
+    let dir = scratch("cli-save-note");
+    let input = fixture("reference/o-answers-2/in-o16-stamps/stamped.xml");
+    let out = run(&[
+        Path::new("save-as"),
+        &input,
+        &dir.join("out.xml"),
+        Path::new("--reference"),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        stderr(&out),
+        format!(
+            "{}:2:1: StampRaised: BTCPP_version 4.9 is written as the target 4.10\n",
+            input.display()
+        )
+    );
+}
+
+#[test]
+fn columns_count_characters() {
+    let dir = scratch("cli-column");
+    let file = dir.join("t.xml");
+    // "é" is two bytes; the attribute starts at character 18 of line 2,
+    // byte 19.
+    fs::write(
+        &file,
+        "<root BTCPP_format=\"4\"><BehaviorTree ID=\"T\">\n\u{e9} <AlwaysSuccess bogus=\"1\"/></BehaviorTree></root>",
+    )
+    .unwrap();
+    let out = run(&[Path::new("check"), &file]);
+    let err = stderr(&out);
+    assert!(
+        err.contains(&format!("{}:2:18: UnknownPort: ", file.display())),
+        "{err}"
+    );
+}
