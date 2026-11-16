@@ -113,27 +113,43 @@ impl std::error::Error for LoadError {
     }
 }
 
-/// Whether `later` is what the reference writer writes for `first`: the
-/// same kind, `ID`, `editable` and ports (direction, name, type, default and
-/// description), without the `<description>` the writer drops (spec §2.4).
-/// A declaration holding anything the view records by name but not by value
-/// (a `<description>`'s text, unrecognized content) never matches, since
-/// two such declarations cannot be told apart.
-fn written_copy(first: &NodeModel, later: &NodeModel) -> bool {
-    let opaque = |m: &NodeModel| {
-        !m.unrecognized.is_empty() || m.ports.iter().any(|p| !p.unrecognized.is_empty())
-    };
-    // Equal after the projection, the two are opaque together or not at
-    // all, and `later` has no <description>.
-    !opaque(later)
-        && NodeModel {
-            offset: 0,
-            has_description: false,
-            ..first.clone()
-        } == NodeModel {
-            offset: 0,
-            ..later.clone()
-        }
+/// What the reference writer writes for a model (spec §3.2, the model
+/// block): its kind, `ID`, `editable`, and each port's direction, name and
+/// type, in order. `None` for a model the writer refuses: one with
+/// metadata, a port default, port text other than whitespace, or content
+/// the view does not model (spec §3.7). A `<description>` element is
+/// dropped, not refused (spec §2.4).
+type WrittenModel<'a> = (
+    &'a crate::tree::ModelKind,
+    &'a str,
+    bool,
+    Vec<(&'a crate::tree::PortDirection, &'a str, Option<&'a str>)>,
+);
+
+fn written_form(m: &NodeModel) -> Option<WrittenModel<'_>> {
+    let refused = !m.unrecognized.is_empty()
+        || !m.metadata.is_empty()
+        || m.ports.iter().any(|p| {
+            !p.unrecognized.is_empty() || p.default.is_some() || !p.description.trim().is_empty()
+        });
+    if refused {
+        return None;
+    }
+    let ports = m
+        .ports
+        .iter()
+        .map(|p| (&p.direction, p.name.as_str(), p.type_name.as_deref()))
+        .collect();
+    Some((&m.kind, m.id.as_str(), m.editable, ports))
+}
+
+/// Whether one of two declarations of a model, in either order, is the
+/// reference writer's copy of the other: both write the same, and at most
+/// one has a `<description>` (the writer's copy never does, and two
+/// descriptions cannot be compared, as the view does not keep their text).
+fn written_copy(a: &NodeModel, b: &NodeModel) -> bool {
+    !(a.has_description && b.has_description)
+        && written_form(a).is_some_and(|w| Some(w) == written_form(b))
 }
 
 /// A loaded project (spec §2.3.1).

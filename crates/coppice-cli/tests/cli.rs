@@ -744,3 +744,54 @@ fn saves_follow_each_other_when_the_project_describes_its_models() {
     let out = run(&[Path::new("check"), &project]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
+
+#[test]
+fn saves_follow_each_other_when_the_models_load_after_the_tree() {
+    // The saved tree's copy of the model loads first, the described original
+    // after it.
+    let dir = scratch("cli-save-models-last");
+    copy_dir("reference/o-answers-2/in-o14-models", &dir);
+    let project = dir.join("proj.btproj");
+    fs::write(
+        &project,
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" project_name="O14">
+  <include path="tree.xml"/>
+  <include path="unused.xml"/>
+  <include path="models.xml"/>
+</root>
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("models.xml"),
+        r#"<root BTCPP_format="4">
+  <TreeNodesModel>
+    <Action ID="UnusedModel" editable="true"/>
+    <Action ID="UsedModel" editable="true">
+      <description>moves the arm</description>
+      <input_port name="p">
+      </input_port>
+    </Action>
+  </TreeNodesModel>
+</root>
+"#,
+    )
+    .unwrap();
+    for tree in ["tree.xml", "unused.xml", "tree.xml"] {
+        let out = run(&[
+            Path::new("save"),
+            &dir.join(tree),
+            Path::new("--reference"),
+            Path::new("--project"),
+            &project,
+        ]);
+        assert_eq!(out.status.code(), Some(0), "{tree}: {}", stderr(&out));
+        let out = run(&[Path::new("check"), &project]);
+        assert_eq!(out.status.code(), Some(0), "after {tree}: {}", stderr(&out));
+    }
+    assert_eq!(
+        fs::read(dir.join("tree.xml")).unwrap(),
+        fs::read(fixture("reference/o-answers-2/out-o14/tree.xml")).unwrap()
+    );
+}

@@ -631,17 +631,19 @@ fn tree_lookups_do_not_rebuild_the_registry() {
 }
 
 #[test]
-fn an_identical_redeclaration_in_a_later_document_is_not_reported() {
-    let model = r#"<Action ID="M" editable="true"><input_port name="a" type="int">the a</input_port></Action>"#;
+fn the_written_copy_in_a_later_document_is_not_reported() {
+    let model = r#"<Action ID="M" editable="true"><input_port name="a" type="int"/><output_port name="b"/></Action>"#;
     let main = root(&format!(
         r#"<include path="t.xml"/><TreeNodesModel>{model}</TreeNodesModel>"#
     ));
-    // Same declaration, laid out differently.
+    // As the reference writer lays it out.
     let t = root(
         r#"<TreeNodesModel>
   <Action ID="M"
           editable="true">
-    <input_port name="a" type="int">the a</input_port>
+    <input_port name="a"
+                type="int"/>
+    <output_port name="b"/>
   </Action>
 </TreeNodesModel>"#,
     );
@@ -649,36 +651,6 @@ fn an_identical_redeclaration_in_a_later_document_is_not_reported() {
     let p = load(&mut m, "/p/main.btproj");
     assert_eq!(diags(&p), []);
     assert_eq!(p.models()[0].offset, at(&main, "<Action"));
-}
-
-#[test]
-fn any_difference_in_a_redeclaration_is_reported() {
-    let main = root(concat!(
-        r#"<include path="t.xml"/><TreeNodesModel>"#,
-        r#"<Action ID="M" editable="true"><input_port name="a" type="int">d</input_port></Action>"#,
-        r#"</TreeNodesModel>"#,
-    ));
-    for other in [
-        r#"<Condition ID="M" editable="true"><input_port name="a" type="int">d</input_port></Condition>"#,
-        r#"<Action ID="M"><input_port name="a" type="int">d</input_port></Action>"#,
-        r#"<Action ID="M" editable="true"><output_port name="a" type="int">d</output_port></Action>"#,
-        r#"<Action ID="M" editable="true"><input_port name="b" type="int">d</input_port></Action>"#,
-        r#"<Action ID="M" editable="true"><input_port name="a" type="bool">d</input_port></Action>"#,
-        r#"<Action ID="M" editable="true"><input_port name="a" type="int" default="1">d</input_port></Action>"#,
-        r#"<Action ID="M" editable="true"><input_port name="a" type="int">e</input_port></Action>"#,
-        r#"<Action ID="M" editable="true"><input_port name="a" type="int">d</input_port><input_port name="c"/></Action>"#,
-        r#"<Action ID="M" editable="true"><input_port name="a" type="int">d</input_port><MetadataFields><Metadata k="v"/></MetadataFields></Action>"#,
-        r#"<Action ID="M" editable="true"><description>x</description><input_port name="a" type="int">d</input_port></Action>"#,
-    ] {
-        let t = root(&format!("<TreeNodesModel>{other}</TreeNodesModel>"));
-        let mut m = Mem::with(&[("/p/main.btproj", &main), ("/p/t.xml", &t)]);
-        let p = load(&mut m, "/p/main.btproj");
-        let kinds: Vec<_> = diags(&p).into_iter().map(|(d, k, _)| (d, k)).collect();
-        assert!(
-            kinds.contains(&(1, DiagnosticKind::DuplicateModel)),
-            "{other}: {kinds:?}"
-        );
-    }
 }
 
 fn duplicates_between(first: &str, later: &str) -> Vec<DiagnosticKind> {
@@ -695,48 +667,76 @@ fn duplicates_between(first: &str, later: &str) -> Vec<DiagnosticKind> {
         .collect()
 }
 
-#[test]
-fn the_written_copy_of_a_model_with_a_description_is_not_reported() {
-    // The reference writer drops the <description> (spec §2.4).
+/// Both orders: the copy may load before or after the original.
+fn accepted(a: &str, b: &str) {
+    assert_eq!(duplicates_between(a, b), [], "{a} / {b}");
+    assert_eq!(duplicates_between(b, a), [], "{b} / {a}");
+}
+
+fn reported(a: &str, b: &str) {
     assert_eq!(
-        duplicates_between(
-            r#"<Action ID="M"><description>moves the arm</description><input_port name="a"/></Action>"#,
-            r#"<Action ID="M"><input_port name="a"/></Action>"#,
-        ),
-        []
+        duplicates_between(a, b),
+        [DiagnosticKind::DuplicateModel],
+        "{a} / {b}"
+    );
+    assert_eq!(
+        duplicates_between(b, a),
+        [DiagnosticKind::DuplicateModel],
+        "{b} / {a}"
     );
 }
 
 #[test]
-fn content_recorded_only_by_name_is_always_reported() {
-    for (first, later) in [
-        // Description texts differ, and the view keeps neither.
-        (
-            r#"<Action ID="M"><description>moves the arm</description></Action>"#,
-            r#"<Action ID="M"><description>deletes the disk</description></Action>"#,
-        ),
-        // A description only in the later one: not a written copy.
-        (
-            r#"<Action ID="M"/>"#,
-            r#"<Action ID="M"><description>x</description></Action>"#,
-        ),
-        // Unrecognized attribute values differ.
-        (r#"<Action ID="M" foo="1"/>"#, r#"<Action ID="M" foo="2"/>"#),
-        // Even when they are the same.
-        (r#"<Action ID="M" foo="1"/>"#, r#"<Action ID="M" foo="1"/>"#),
-        (
-            r#"<Action ID="M"><input_port name="a" foo="1"/></Action>"#,
-            r#"<Action ID="M"><input_port name="a" foo="2"/></Action>"#,
-        ),
-        (
-            r#"<Action ID="M"><MetadataFields><Metadata k="1"/></MetadataFields></Action>"#,
-            r#"<Action ID="M"><MetadataFields><Metadata k="1"/></MetadataFields></Action>"#,
-        ),
+fn a_written_copy_matches_whichever_loads_first() {
+    // The writer drops a <description> (spec §2.4).
+    accepted(
+        r#"<Action ID="M"><description>moves the arm</description><input_port name="a"/></Action>"#,
+        r#"<Action ID="M"><input_port name="a"/></Action>"#,
+    );
+    // It accepts port text that is only whitespace, and writes the port empty.
+    accepted(
+        "<Action ID=\"M\"><input_port name=\"a\">\n      </input_port></Action>",
+        r#"<Action ID="M"><input_port name="a"/></Action>"#,
+    );
+}
+
+#[test]
+fn any_difference_in_what_the_writer_writes_is_reported() {
+    let base = r#"<Action ID="M" editable="true"><input_port name="a" type="int"/><input_port name="b"/></Action>"#;
+    for other in [
+        r#"<Condition ID="M" editable="true"><input_port name="a" type="int"/><input_port name="b"/></Condition>"#,
+        r#"<Action ID="M"><input_port name="a" type="int"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><output_port name="a" type="int"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="c" type="int"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="bool"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="int"/></Action>"#,
+        // A reordered port list.
+        r#"<Action ID="M" editable="true"><input_port name="b"/><input_port name="a" type="int"/></Action>"#,
     ] {
-        assert_eq!(
-            duplicates_between(first, later),
-            [DiagnosticKind::DuplicateModel],
-            "{first} / {later}"
-        );
+        reported(base, other);
     }
+}
+
+#[test]
+fn what_the_writer_refuses_or_the_view_cannot_compare_is_always_reported() {
+    let plain = r#"<Action ID="M"><input_port name="a"/></Action>"#;
+    for other in [
+        // Port text, a default, metadata, unmodelled content: the writer
+        // refuses each, so no copy of it exists.
+        r#"<Action ID="M"><input_port name="a">the a</input_port></Action>"#,
+        r#"<Action ID="M"><input_port name="a" default="1"/></Action>"#,
+        r#"<Action ID="M"><input_port name="a"/><MetadataFields><Metadata k="1"/></MetadataFields></Action>"#,
+        r#"<Action ID="M" foo="1"><input_port name="a"/></Action>"#,
+        r#"<Action ID="M"><input_port name="a" foo="1"/></Action>"#,
+    ] {
+        reported(plain, other);
+        // Even against itself.
+        reported(other, other);
+    }
+    // Two descriptions: the view keeps neither text.
+    reported(
+        r#"<Action ID="M"><description>moves the arm</description><input_port name="a"/></Action>"#,
+        r#"<Action ID="M"><description>deletes the disk</description><input_port name="a"/></Action>"#,
+    );
 }
