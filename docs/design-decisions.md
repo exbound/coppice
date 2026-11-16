@@ -98,7 +98,9 @@ derive crate would bring a procedural-macro build dependency for a handful
 of variants. Diagnostics, meaning conditions the spec says to
 report without refusing (dialect mismatch, port-versus-model mismatch,
 unknown uid, status byte 10), are a separate, collected list, never an
-error. The CLI uses `anyhow` at its top level only.
+error. The CLI reports errors as text on standard error, with no error crate:
+`anyhow` would be its first third-party dependency, and nothing yet needs
+more than a message.
 
 ## D8. Test harness — Decided for logs; Provisional for the monitor
 
@@ -141,3 +143,26 @@ unless they ask for reference output. A reference save of a project is
 an export: it needs a new or empty destination directory and never
 overwrites an existing file (spec §3.3). Output is plain text by default, with `--json` for
 scripts.
+
+In place now:
+
+- `check <file>` loads the file with its includes (F3) and prints each
+  diagnostic (F10) to standard error as `<path>:<line>:<column>: <kind>:
+  <message>`.
+- `save-as <input> <output>` writes the lossless form (F5), or with
+  `--reference` the standalone reference form (F9), optionally `--v3`
+  (F7) and `--target <version>`. It never replaces an existing file.
+- `save <tree-file> --reference` rewrites the file in place as the
+  reference saves it: within a project with `--project <project-file>`
+  (F6, F7), or standalone (F9). `save` without `--reference` is a usage
+  error, since a lossless save of an unedited file changes nothing.
+- `log dump <file.btlog>` prints the header and one tab-separated line per
+  record, with its absolute time and the node's previous status (F11). On
+  a damaged file it prints what was read before the damage.
+- Every file the CLI writes appears complete or not at all.
+- Exit codes: 0 done, 1 the input has a problem or was refused, 2 the
+  command line is wrong.
+
+Not yet: `log write` (no input form is specified), `monitor` and `record`
+(with F13 to F16), a reference project export (F8, waiting on O-18), and
+`--json`.

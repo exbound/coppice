@@ -12,5 +12,9 @@ publish.workspace = true
 name = "coppice"
 path = "src/main.rs"
 
+[dependencies]
+coppice-btlog = { path = "../coppice-btlog" }
+coppice-doc = { path = "../coppice-doc" }
+
 [lints]
 workspace = true
