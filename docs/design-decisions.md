@@ -15,8 +15,9 @@ crate.
 
 ## D2. Workspace layout — Decided
 
-The layout below is decided. `coppice-doc`, `coppice-btlog` and
-`coppice-cli` exist; `coppice-monitor` arrives with its first feature, so the workspace never
+The layout below is decided. All four crates exist; `coppice-monitor`
+holds only the wire codec until the transport (D4) arrives. A crate arrives
+with its first feature, so the workspace never
 carries an empty crate with nothing to test.
 
 ```
