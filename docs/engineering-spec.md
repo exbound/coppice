@@ -218,14 +218,16 @@ decides:
   (`LeafWithChildren`, `UnknownPort`, §2.5). An `ID` declared again in a
   later document is reported there (`DuplicateModel`), and the first
   declaration is used, with one exception. A tree file saved in reference
-  mode repeats the project's models it uses in its own block (§3.2), so
-  when one of the two declarations, in either order, is the reference
-  writer's copy of the other, it is not reported. That is the case when
-  the writer writes the same for both: the same kind, `ID` and `editable`,
-  and the same ports in the same order with the same direction, name and
-  type. Neither may hold content the writer refuses in a model (§3.7):
-  metadata, a port default, port text other than whitespace, or anything
-  the view does not model. And at most one of them may have a
+  mode repeats the project's models it uses in its own block (§3.2), so a
+  later declaration is not reported when, for each earlier declaration of
+  the `ID`, one of the two is the reference writer's copy of the other.
+  That is the case when the writer writes the same for both: the same
+  kind, `ID` and `editable`, and the same ports in the same order with the
+  same direction, name and type. Neither may be a model the writer
+  refuses, by the writer's own check (§3.7): metadata, a port default,
+  port text other than whitespace, a port declared twice, a reserved port
+  name, a tab or line break in a value, or anything the view does not
+  model. And at most one of them may have a
   `<description>` element: the writer drops it (§2.4), and the view keeps
   no description text to compare two of them by. Anything else is
   reported, a reordered port list included. How the reference merges

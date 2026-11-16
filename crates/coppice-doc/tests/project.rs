@@ -651,6 +651,15 @@ fn the_written_copy_in_a_later_document_is_not_reported() {
     let p = load(&mut m, "/p/main.btproj");
     assert_eq!(diags(&p), []);
     assert_eq!(p.models()[0].offset, at(&main, "<Action"));
+    // And the other way round.
+    let swapped = root(&format!(
+        r#"<include path="m.xml"/>{}"#,
+        &t[t.find("<TreeNodesModel").unwrap()..t.rfind("</root>").unwrap()]
+    ));
+    let models = root(&format!("<TreeNodesModel>{model}</TreeNodesModel>"));
+    let mut m = Mem::with(&[("/p/main.btproj", &swapped), ("/p/m.xml", &models)]);
+    let p = load(&mut m, "/p/main.btproj");
+    assert_eq!(diags(&p), []);
 }
 
 fn duplicates_between(first: &str, later: &str) -> Vec<DiagnosticKind> {
@@ -729,6 +738,10 @@ fn what_the_writer_refuses_or_the_view_cannot_compare_is_always_reported() {
         r#"<Action ID="M"><input_port name="a"/><MetadataFields><Metadata k="1"/></MetadataFields></Action>"#,
         r#"<Action ID="M" foo="1"><input_port name="a"/></Action>"#,
         r#"<Action ID="M"><input_port name="a" foo="1"/></Action>"#,
+        // A port declared twice, a reserved port name, a tab in a value.
+        r#"<Action ID="M"><input_port name="a"/><input_port name="a"/></Action>"#,
+        r#"<Action ID="M"><input_port name="a"/><input_port name="name"/></Action>"#,
+        "<Action ID=\"M\"><input_port name=\"a\" type=\"x&#9;y\"/></Action>",
     ] {
         reported(plain, other);
         // Even against itself.
@@ -739,4 +752,36 @@ fn what_the_writer_refuses_or_the_view_cannot_compare_is_always_reported() {
         r#"<Action ID="M"><description>moves the arm</description><input_port name="a"/></Action>"#,
         r#"<Action ID="M"><description>deletes the disk</description><input_port name="a"/></Action>"#,
     );
+}
+
+#[test]
+fn every_earlier_declaration_must_match() {
+    // A written copy, then two described originals: whatever the order, the
+    // two descriptions meet, and the later one is reported.
+    let copy = r#"<Action ID="M"><input_port name="a"/></Action>"#;
+    let one =
+        r#"<Action ID="M"><description>first meaning</description><input_port name="a"/></Action>"#;
+    let two = r#"<Action ID="M"><description>another meaning</description><input_port name="a"/></Action>"#;
+    for order in [
+        [copy, one, two],
+        [one, copy, two],
+        [one, two, copy],
+        [copy, two, one],
+    ] {
+        let doc = |m: &str| root(&format!("<TreeNodesModel>{m}</TreeNodesModel>"));
+        let main = root(r#"<include path="a.xml"/><include path="b.xml"/><include path="c.xml"/>"#);
+        let (a, b, c) = (doc(order[0]), doc(order[1]), doc(order[2]));
+        let mut m = Mem::with(&[
+            ("/p/main.btproj", &main),
+            ("/p/a.xml", &a),
+            ("/p/b.xml", &b),
+            ("/p/c.xml", &c),
+        ]);
+        let p = load(&mut m, "/p/main.btproj");
+        let duplicates: Vec<_> = diags(&p)
+            .into_iter()
+            .filter(|(_, k, _)| *k == DiagnosticKind::DuplicateModel)
+            .collect();
+        assert_eq!(duplicates.len(), 1, "{order:?}: {duplicates:?}");
+    }
 }

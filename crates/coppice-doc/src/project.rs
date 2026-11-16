@@ -115,10 +115,9 @@ impl std::error::Error for LoadError {
 
 /// What the reference writer writes for a model (spec §3.2, the model
 /// block): its kind, `ID`, `editable`, and each port's direction, name and
-/// type, in order. `None` for a model the writer refuses: one with
-/// metadata, a port default, port text other than whitespace, or content
-/// the view does not model (spec §3.7). A `<description>` element is
-/// dropped, not refused (spec §2.4).
+/// type, in order. `None` for a model the writer refuses, by the writer's
+/// own check (spec §3.7). A `<description>` element is dropped, not
+/// refused (spec §2.4).
 type WrittenModel<'a> = (
     &'a crate::tree::ModelKind,
     &'a str,
@@ -127,12 +126,9 @@ type WrittenModel<'a> = (
 );
 
 fn written_form(m: &NodeModel) -> Option<WrittenModel<'_>> {
-    let refused = !m.unrecognized.is_empty()
-        || !m.metadata.is_empty()
-        || m.ports.iter().any(|p| {
-            !p.unrecognized.is_empty() || p.default.is_some() || !p.description.trim().is_empty()
-        });
-    if refused {
+    let mut refusals = Vec::new();
+    crate::reference::check_model(m, &mut refusals);
+    if !refusals.is_empty() {
         return None;
     }
     let ports = m
@@ -553,21 +549,23 @@ impl Project {
         }
 
         // A model declared again in a later document, reported at its first
-        // declaration in that document, unless it is what the reference
-        // writer writes for the first: a tree file saved in reference mode
-        // repeats the project's models in its own block (spec §2.3.1).
-        // Repeats within one document are already reported by that
-        // document.
-        let mut first_in: HashMap<String, (usize, NodeModel)> = HashMap::new();
+        // declaration in that document, unless each declaration so far is
+        // the reference writer's copy of it or the other way round: a tree
+        // file saved in reference mode repeats the project's models in its
+        // own block (spec §2.3.1). Repeats within one document are already
+        // reported by that document.
+        let mut first_in: HashMap<String, (usize, Vec<NodeModel>)> = HashMap::new();
         for (document, d) in self.documents.iter().enumerate() {
             let mut here: HashSet<String> = HashSet::new();
             for m in d.tree.models() {
                 if !here.insert(m.id.clone()) {
                     continue;
                 }
-                match first_in.get(&m.id) {
-                    Some((_, model)) if written_copy(model, &m) => {}
-                    Some(&(first, _)) => push(
+                match first_in.get_mut(&m.id) {
+                    Some((_, earlier)) if earlier.iter().all(|e| written_copy(e, &m)) => {
+                        earlier.push(m);
+                    }
+                    Some(&mut (first, _)) => push(
                         document,
                         DiagnosticKind::DuplicateModel,
                         m.offset,
@@ -578,7 +576,7 @@ impl Project {
                         ),
                     ),
                     None => {
-                        first_in.insert(m.id.clone(), (document, m));
+                        first_in.insert(m.id.clone(), (document, vec![m]));
                     }
                 }
             }

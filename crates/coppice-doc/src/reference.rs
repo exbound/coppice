@@ -772,7 +772,7 @@ fn invalid_model_name(name: &str) -> Option<&'static str> {
 }
 
 /// Refuse a model entry the writer cannot write (rule 9).
-fn check_model(m: &NodeModel, refusals: &mut Vec<Diagnostic>) {
+pub(crate) fn check_model(m: &NodeModel, refusals: &mut Vec<Diagnostic>) {
     let mut seen: Vec<&str> = Vec::new();
     for p in &m.ports {
         if seen.contains(&p.name.as_str()) {
