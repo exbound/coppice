@@ -68,6 +68,10 @@ pub struct Port {
     /// The element's text content with references decoded: the port's
     /// description. Empty when there is none.
     pub description: String,
+    /// What this view does not model: attributes other than `name`, `type`
+    /// and a non-empty `default`, and child elements, each described in a
+    /// few words.
+    pub unrecognized: Vec<String>,
 }
 
 /// One entry of a `<TreeNodesModel>` block (spec §2.4).
@@ -87,6 +91,11 @@ pub struct NodeModel {
     pub metadata: Vec<(String, String)>,
     /// Byte offset of the entry element in its document's source.
     pub offset: usize,
+    /// What this view does not model: attributes other than `ID` and
+    /// `editable="true"` (so `editable="false"` is listed), child elements
+    /// other than ports, `<description>` and `<MetadataFields>`, and text,
+    /// each described in a few words.
+    pub unrecognized: Vec<String>,
 }
 
 /// One `<include>` of a document (spec §2.3).
@@ -455,6 +464,22 @@ impl TreeDocument {
                             .filter(|s| !s.is_empty())
                             .map(str::to_owned),
                         description: port_description(doc, port),
+                        unrecognized: port
+                            .attributes
+                            .iter()
+                            .filter(|a| match a.name.as_str() {
+                                "name" | "type" => false,
+                                // An empty default is not modelled (`default`
+                                // is `None`), so it is listed here.
+                                "default" => a.value.is_empty(),
+                                _ => true,
+                            })
+                            .map(|a| format!("attribute {}", a.name))
+                            .chain(
+                                port.child_elements()
+                                    .map(|c| format!("element <{}>", c.name)),
+                            )
+                            .collect(),
                     });
                 }
                 out.push(NodeModel {
@@ -465,6 +490,7 @@ impl TreeDocument {
                     has_description: entry.child_elements().any(|c| c.name == "description"),
                     metadata: metadata_pairs(entry),
                     offset: entry.span.start,
+                    unrecognized: entry_unrecognized(doc, entry),
                 });
             }
         }
@@ -660,6 +686,34 @@ fn port_description(doc: &Document, port: &Element) -> String {
     out
 }
 
+/// What a model entry holds that [`NodeModel`] does not model.
+fn entry_unrecognized(doc: &Document, entry: &Element) -> Vec<String> {
+    let mut out = Vec::new();
+    for a in &entry.attributes {
+        let known = a.name == "ID" || (a.name == "editable" && a.value == "true");
+        if !known {
+            out.push(format!("attribute {}=\"{}\"", a.name, a.value));
+        }
+    }
+    for child in &entry.children {
+        match child {
+            Node::Element(c) => {
+                if !matches!(
+                    c.name.as_str(),
+                    "input_port" | "output_port" | "inout_port" | "description" | "MetadataFields"
+                ) {
+                    out.push(format!("element <{}>", c.name));
+                }
+            }
+            Node::Text(span) if !doc.text(span).trim().is_empty() => out.push("text".to_owned()),
+            Node::CData(_) => out.push("CDATA".to_owned()),
+            Node::ProcessingInstruction(_) => out.push("a processing instruction".to_owned()),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// The `<MetadataFields>` key/value pairs, in source order.
 fn metadata_pairs(entry: &Element) -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -758,7 +812,7 @@ fn check_node(element: &Element, models: &ModelLookup<'_>, out: &mut Vec<Diagnos
         // (spec §3.6). `SubTree` returned above.
         let ports = builtin_ports(type_name);
         for a in &element.attributes {
-            if (explicit && a.name == "ID") || !is_port_name(&a.name) {
+            if !is_port_name(&a.name) {
                 continue;
             }
             if ports.contains(&a.name.as_str()) {

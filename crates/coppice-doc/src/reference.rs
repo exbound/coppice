@@ -8,11 +8,11 @@
 
 use std::collections::BTreeMap;
 
-use crate::Element;
 use crate::tree::{
     Diagnostic, DiagnosticKind, ModelKind, ModelLookup, NodeModel, Port, PortDirection,
     TreeDocument, builtin_ports, is_builtin, is_port_name, model_lookup,
 };
+use crate::{Element, Node};
 
 /// The comment the reference writes before the model block (spec §3.2
 /// rule 4). A file-format element, written in reference mode only.
@@ -104,6 +104,15 @@ pub fn write_tree(
         )),
     }
     let version = root.attribute("BTCPP_version");
+    if options.mode == WriteMode::V4 && parse_version(&options.target).is_none() {
+        refusals.push(uncovered(
+            root.span.start,
+            format!(
+                "the target \"{}\", which is not MAJOR.MINOR",
+                options.target
+            ),
+        ));
+    }
     match options.mode {
         WriteMode::V3 => {
             if version.is_some() {
@@ -136,6 +145,53 @@ pub fn write_tree(
         },
     }
 
+    // Document-level content the record does not cover (rule 5 covers
+    // comments only).
+    for node in tree.document().nodes() {
+        let what = match node {
+            Node::DocType(_) => Some("a DOCTYPE"),
+            Node::ProcessingInstruction(_) => Some("a processing instruction"),
+            Node::ByteOrderMark(_) => Some("a byte-order mark"),
+            _ => None,
+        };
+        if let Some(what) = what {
+            refusals.push(uncovered(node.span().start, what.to_owned()));
+        }
+    }
+    // Inside <root>: CDATA and processing instructions anywhere, and text
+    // outside a node (rule 3 covers text inside a node).
+    let mut stack: Vec<(&Element, bool)> = vec![(root, false)];
+    while let Some((e, in_node)) = stack.pop() {
+        for child in &e.children {
+            match child {
+                Node::Element(c) => {
+                    let node = in_node || e.name == "BehaviorTree";
+                    if c.name != "TreeNodesModel" {
+                        stack.push((c, node));
+                    }
+                }
+                Node::CData(span) => {
+                    refusals.push(uncovered(span.start, "CDATA".to_owned()));
+                }
+                Node::ProcessingInstruction(span) => {
+                    refusals.push(uncovered(span.start, "a processing instruction".to_owned()));
+                }
+                Node::Text(span) if !in_node && !tree.document().text(span).trim().is_empty() => {
+                    refusals.push(uncovered(span.start, "text outside a node".to_owned()));
+                }
+                _ => {}
+            }
+        }
+    }
+    for block in root.child_elements().filter(|e| e.name == "TreeNodesModel") {
+        for a in &block.attributes {
+            refusals.push(uncovered(
+                a.name_span.start,
+                format!("the <TreeNodesModel> attribute {}", a.name),
+            ));
+        }
+    }
+
     // Root children (rules 3, 4): trees and model blocks only.
     let mut trees: Vec<&Element> = Vec::new();
     for child in root.child_elements() {
@@ -151,6 +207,7 @@ pub fn write_tree(
 
     // Nodes: which models they use, and anything the writer cannot write.
     let mut used: BTreeMap<String, NodeModel> = BTreeMap::new();
+    let mut tree_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for t in &trees {
         for a in &t.attributes {
             if a.name != "ID" {
@@ -160,10 +217,29 @@ pub fn write_tree(
                 ));
             }
         }
-        if t.attribute("ID").is_none() {
+        // The library refuses these (BT 4.9.0 `src/xml_parsing.cpp:571-586`);
+        // what the reference does with them is not in the record. A tree
+        // ID that names a built-in, which the library also refuses
+        // (`:577-581`), is in the record: the reference writes it (fixture
+        // `out-o4/tree.xml`, `<BehaviorTree ID="SubTree">`).
+        match t.attribute("ID") {
+            None | Some("") => refusals.push(uncovered(
+                t.span.start,
+                "a <BehaviorTree> without an ID, or with an empty one".to_owned(),
+            )),
+            Some(id) => {
+                if !tree_ids.insert(id) {
+                    refusals.push(uncovered(
+                        t.span.start,
+                        format!("a second <BehaviorTree> with the ID {id}"),
+                    ));
+                }
+            }
+        }
+        if t.child_elements().count() != 1 {
             refusals.push(uncovered(
                 t.span.start,
-                "a <BehaviorTree> without an ID".to_owned(),
+                "a <BehaviorTree> without exactly one child node".to_owned(),
             ));
         }
         // Document order: the importer's model comes from a node type's
@@ -273,7 +349,10 @@ fn stamp_order(
 
 fn parse_version(v: &str) -> Option<(u32, u32)> {
     let (major, minor) = v.split_once('.')?;
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    // Canonical decimal numbers only: "4.010" is not "4.10".
+    let digits = |s: &str| {
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'))
+    };
     if !digits(major) || !digits(minor) {
         return None;
     }
@@ -306,7 +385,20 @@ fn classify(
         ));
         return;
     }
-    if name == "SubTree" || name == "SubTreePlus" {
+    let subtree = name == "SubTree" || (name == "SubTreePlus" && options.mode == WriteMode::V3);
+    if subtree {
+        match e.attribute("ID") {
+            None | Some("") => refusals.push(uncovered(
+                e.span.start,
+                format!("a <{name}> without an ID, or with an empty one"),
+            )),
+            // The library refuses this (BT 4.9.0 `src/xml_parsing.cpp:595-600`).
+            Some(id) if is_builtin(id) => refusals.push(uncovered(
+                e.span.start,
+                format!("a <{name}> whose ID is the built-in node {id}"),
+            )),
+            Some(_) => {}
+        }
         for a in &e.attributes {
             if a.name != "ID" {
                 refusals.push(uncovered(
@@ -340,6 +432,13 @@ fn classify(
         WriteMode::V3 => V3_BUILTINS_SEEN.contains(&name),
     };
     if let Some(m) = lookup.get(name).filter(|_| !is_builtin(name)) {
+        if m.kind == ModelKind::SubTree {
+            refusals.push(uncovered(
+                e.span.start,
+                format!("a node named after the declared SubTree model {name} (spec §7, O-17 f)"),
+            ));
+            return;
+        }
         used.entry(m.id.clone()).or_insert_with(|| (*m).clone());
         return;
     }
@@ -433,18 +532,39 @@ fn import_model(
                     type_name: None,
                     default: None,
                     description: String::new(),
+                    unrecognized: Vec::new(),
                 })
                 .collect(),
             editable: true,
             has_description: false,
             metadata: Vec::new(),
             offset: e.span.start,
+            unrecognized: Vec::new(),
         },
     );
 }
 
 /// Refuse a model entry the writer cannot write (rule 9).
 fn check_model(m: &NodeModel, refusals: &mut Vec<Diagnostic>) {
+    for what in &m.unrecognized {
+        refusals.push(uncovered(m.offset, format!("model {}'s {what}", m.id)));
+    }
+    for p in &m.ports {
+        if !is_port_name(&p.name) {
+            // `name` and the other reserved names would collide with the
+            // node's own attributes.
+            refusals.push(uncovered(
+                m.offset,
+                format!("model {}'s port {}, which is not a port name", m.id, p.name),
+            ));
+        }
+        for what in &p.unrecognized {
+            refusals.push(uncovered(
+                m.offset,
+                format!("model {}'s port {} {what}", m.id, p.name),
+            ));
+        }
+    }
     if !m.metadata.is_empty() {
         refusals.push(uncovered(m.offset, format!("model {}'s metadata", m.id)));
     }

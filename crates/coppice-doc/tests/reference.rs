@@ -405,11 +405,15 @@ fn v3_refuses_what_the_importer_case_does_not_cover() {
         refusals(&src, &v3()),
         [(DiagnosticKind::NotInRecord, at(&src, r#"<Custom b"#))]
     );
-    // ...also when the uses are direct children of the tree.
+    // ...also when the uses are direct children of the tree (which is
+    // itself refused: a tree has exactly one child node).
     let src = v3_tree(r#"<Custom a="1"/><Custom b="2"/>"#);
     assert_eq!(
         refusals(&src, &v3()),
-        [(DiagnosticKind::NotInRecord, at(&src, r#"<Custom b"#))]
+        [
+            (DiagnosticKind::NotInRecord, at(&src, "<BehaviorTree")),
+            (DiagnosticKind::NotInRecord, at(&src, r#"<Custom b"#)),
+        ]
     );
     // An undeclared node with children.
     let src = v3_tree(r#"<Custom><Script code="1"/></Custom>"#);
@@ -501,5 +505,193 @@ fn the_reference_load_refusals_are_diagnostics_on_load() {
             kinds.contains(&DiagnosticKind::LeafWithChildren),
             "{rel}: {kinds:?}"
         );
+    }
+}
+
+#[test]
+fn round_one_cases_are_refused_where_they_occur() {
+    let d = ReferenceOptions::default();
+    let not = DiagnosticKind::NotInRecord;
+    let model = |m: &str, node: &str| {
+        v4(&format!(
+            r#"<BehaviorTree ID="T">{node}</BehaviorTree><TreeNodesModel>{m}</TreeNodesModel>"#
+        ))
+    };
+    for (src, needle) in [
+        // A declared port named like a reserved attribute.
+        (
+            model(
+                r#"<Action ID="M"><input_port name="name"/></Action>"#,
+                r#"<M name="x"/>"#,
+            ),
+            r#"<Action ID="M""#,
+        ),
+        // Unmodelled content of a used model.
+        (
+            model(r#"<Action ID="M" editable="false"/>"#, "<M/>"),
+            r#"<Action ID="M""#,
+        ),
+        (
+            model(r#"<Action ID="M" foo="bar"/>"#, "<M/>"),
+            r#"<Action ID="M""#,
+        ),
+        (
+            model(
+                r#"<Action ID="M"><input_port name="p" foo="x"/></Action>"#,
+                "<M/>",
+            ),
+            r#"<Action ID="M""#,
+        ),
+        (
+            model(
+                r#"<Action ID="M"><input_port name="p" default=""/></Action>"#,
+                "<M/>",
+            ),
+            r#"<Action ID="M""#,
+        ),
+        (
+            model(r#"<Action ID="M"><other/></Action>"#, "<M/>"),
+            r#"<Action ID="M""#,
+        ),
+        // A node named after a declared SubTree model, and a subtree with one.
+        (model(r#"<SubTree ID="S"/>"#, "<S/>"), "<S/>"),
+        (
+            v4(
+                r#"<BehaviorTree ID="T"><SubTree ID="S"/></BehaviorTree><BehaviorTree ID="S"><AlwaysSuccess/></BehaviorTree><TreeNodesModel><SubTree ID="S"/></TreeNodesModel>"#,
+            ),
+            r#"<SubTree ID="S"/></BehaviorTree>"#,
+        ),
+        // Subtree nodes the library refuses.
+        (tree_of("<SubTree/>"), "<SubTree"),
+        (tree_of(r#"<SubTree ID=""/>"#), "<SubTree"),
+        (tree_of(r#"<SubTree ID="Sequence"/>"#), "<SubTree"),
+        // Trees the library refuses.
+        (v4(r#"<BehaviorTree ID="T"/>"#), "<BehaviorTree"),
+        (
+            v4(r#"<BehaviorTree ID=""><AlwaysSuccess/></BehaviorTree>"#),
+            "<BehaviorTree",
+        ),
+        (
+            v4(
+                r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree><BehaviorTree ID="T"><AlwaysFailure/></BehaviorTree>"#,
+            ),
+            r#"<BehaviorTree ID="T"><AlwaysFailure"#,
+        ),
+        // Document content outside rule 5.
+        (
+            format!("<!DOCTYPE root>{}", tree_of("<AlwaysSuccess/>")),
+            "<!DOCTYPE",
+        ),
+        (format!("<?pi x?>{}", tree_of("<AlwaysSuccess/>")), "<?pi"),
+        (
+            format!("\u{feff}{}", tree_of("<AlwaysSuccess/>")),
+            "\u{feff}",
+        ),
+        (
+            tree_of("<Script code=\"1\"><![CDATA[x]]></Script>"),
+            "<![CDATA[",
+        ),
+        (
+            v4(r#"stray<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#),
+            "stray",
+        ),
+        (
+            v4(r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree><TreeNodesModel foo="1"/>"#),
+            "foo=",
+        ),
+    ] {
+        assert_eq!(refusals(&src, &d), [(not, at(&src, needle))], "{src}");
+    }
+    // A tree with two child nodes.
+    let src = v4(r#"<BehaviorTree ID="T"><AlwaysSuccess/><AlwaysFailure/></BehaviorTree>"#);
+    assert_eq!(refusals(&src, &d), [(not, at(&src, "<BehaviorTree"))]);
+}
+
+#[test]
+fn the_target_must_be_a_canonical_major_minor_version() {
+    let src = tree_of("<AlwaysSuccess/>");
+    for target in ["5", "4.10.1", "4.010", ""] {
+        let options = ReferenceOptions {
+            target: target.to_owned(),
+            ..ReferenceOptions::default()
+        };
+        assert_eq!(
+            refusals(&src, &options),
+            [(DiagnosticKind::NotInRecord, 0)],
+            "target {target:?}"
+        );
+    }
+    // A non-canonical source stamp is not compared numerically either.
+    let src = r#"<root BTCPP_format="4" BTCPP_version="4.010"><BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree></root>"#;
+    assert_eq!(
+        refusals(src, &ReferenceOptions::default()),
+        [(DiagnosticKind::NotInRecord, 0)]
+    );
+}
+
+#[test]
+fn subtree_plus_is_a_v3_node_only() {
+    let src = tree_of(r#"<SubTreePlus ID="T"/>"#);
+    assert_eq!(
+        refusals(&src, &ReferenceOptions::default()),
+        [
+            (DiagnosticKind::UndeclaredNode, at(&src, "<SubTreePlus")),
+            (DiagnosticKind::NotInRecord, at(&src, "ID=\"T\"/>")),
+        ]
+    );
+}
+
+#[test]
+fn built_in_ports_are_pinned_to_the_library_source() {
+    // A snapshot of BUILTIN_PORTS, read from BT 4.9.0's providedPorts; a
+    // change to the table must change this test too.
+    let snapshot: &[(&str, &[&str])] = &[
+        ("Script", &["code"]),
+        ("ScriptCondition", &["code"]),
+        ("SetBlackboard", &["value", "output_key"]),
+        ("UnsetBlackboard", &["key"]),
+        ("WasEntryUpdated", &["entry"]),
+        ("SkipUnlessUpdated", &["entry"]),
+        ("WaitValueUpdate", &["entry"]),
+        ("Sleep", &["msec"]),
+        ("Delay", &["delay_msec"]),
+        ("Timeout", &["msec"]),
+        ("Repeat", &["num_cycles"]),
+        ("RetryUntilSuccessful", &["num_attempts"]),
+        ("RunOnce", &["then_skip"]),
+        ("Precondition", &["if", "else"]),
+        ("TryCatch", &["catch_on_halt"]),
+        ("Parallel", &["success_count", "failure_count"]),
+        ("ParallelAll", &["max_failures"]),
+        ("LoopInt", &["queue", "if_empty", "value"]),
+        ("LoopBool", &["queue", "if_empty", "value"]),
+        ("LoopDouble", &["queue", "if_empty", "value"]),
+        ("LoopString", &["queue", "if_empty", "value"]),
+        ("Switch2", &["variable", "case_1", "case_2"]),
+        ("Switch3", &["variable", "case_1", "case_2", "case_3"]),
+        (
+            "Switch4",
+            &["variable", "case_1", "case_2", "case_3", "case_4"],
+        ),
+        (
+            "Switch5",
+            &["variable", "case_1", "case_2", "case_3", "case_4", "case_5"],
+        ),
+        (
+            "Switch6",
+            &[
+                "variable", "case_1", "case_2", "case_3", "case_4", "case_5", "case_6",
+            ],
+        ),
+    ];
+    assert_eq!(coppice_doc::BUILTIN_PORTS, snapshot);
+    // Every other built-in declares no ports.
+    for b in coppice_doc::BUILTIN_LEAVES
+        .iter()
+        .chain(coppice_doc::BUILTIN_BRANCHES)
+    {
+        if !snapshot.iter().any(|(n, _)| n == b) {
+            assert!(coppice_doc::builtin_ports(b).is_empty(), "{b}");
+        }
     }
 }

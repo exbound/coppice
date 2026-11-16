@@ -311,7 +311,8 @@ V3 mode too (§3.5). Fixture paths in this section are under
    `BTCPP_version="<target>"` (V4 only, see *Version stamp*); a
    `project_name` on a tree file's root is dropped (answers O-16, fixture
    `o-answers-2/out-o16b/ordered.xml`, whose source put `project_name`
-   before `BTCPP_format`; no input puts the stamp first). With two
+   before `BTCPP_format`). No input puts the stamp first, so normalizing
+   that order too is a **HYPOTHESIS**. With two
    attributes the tag wraps by rule 7. Other root attributes (such as
    `main_tree_to_execute`) are not covered (§7, O-17).
 3. **Indentation and element forms.** The body is indented **2 spaces per
@@ -382,7 +383,8 @@ V3 mode too (§3.5). Fixture paths in this section are under
    tag's line, each further one on its own continuation line indented to
    the first attribute's column. A tag with zero or one attribute stays
    on one line in every output, but none has a single long value, so
-   whether a long value alone wraps is not covered (§7, O-17). Above the
+   that a long value alone stays on one line is a **HYPOTHESIS** (§7,
+   O-17 g). Above the
    count, value length has no effect (answers O-10:
    `o-answers-2/out-o10/tree.xml`, where a 200-character value wraps
    exactly as short values do). The rule covers the root (rule 2), body
@@ -575,31 +577,51 @@ refused.
 
 ### 3.7 What coppice's reference writer refuses (F6, F7, F9)
 
-The reference writer's output is either the reference's bytes or nothing:
-where the record does not say what the reference writes, coppice refuses
-the save and names the case (`NotInRecord`), rather than guessing. It
-refuses:
+The reference writer follows §3.2 to §3.5: rules established from the
+fixtures, and the rules those sections state as a **HYPOTHESIS** (for
+example a single long attribute value kept on one line, rule 7; a source
+that puts the stamp first, rule 2; port reordering for declared models
+and the case of the model sort key, rules 6 and 9). Where those sections
+give no rule at all, it refuses the save and names the case
+(`NotInRecord`) rather than guessing. So its output matches the reference
+wherever the record establishes the bytes, and follows a stated
+hypothesis elsewhere. It refuses:
 
 - **any input with a diagnostic** (§2.5, §2.3.1): the inputs the reference
   refuses to load (§3.6) are among them, and a missing format, a malformed
   model block or a duplicate are not covered;
 - a **stamp newer than the target** (`NewerStamp`, §3.2), and a stamp or
-  target that is not `MAJOR.MINOR`;
+  target that is not a canonical `MAJOR.MINOR` (`4.10`, not `4.010`,
+  `4.10.1` or `5`);
 - a `BTCPP_format` other than `4` in V4 mode or `3` in V3 mode, and a
   stamp in V3 mode;
 - a root attribute other than `BTCPP_format`, `BTCPP_version` and
   `project_name`; a root child other than `<BehaviorTree>` and
   `<TreeNodesModel>` (an `<include>`, an unknown element); a
   `<BehaviorTree>` without an `ID` or with another attribute (O-17 c, d);
+- what the library's loader refuses and the record does not show the
+  reference writing (BT 4.9.0 `src/xml_parsing.cpp:571-600`): a
+  `<BehaviorTree>` with an empty `ID`, two trees with the same `ID`, a
+  tree without exactly one child node, and a subtree node without an
+  `ID`, with an empty one, or naming a built-in. A tree whose `ID` names
+  a built-in, which the library also refuses, is written: the reference
+  writes one (fixture `out-o4/tree.xml`);
 - the explicit `<Action|Condition|Control|Decorator ID="…">` form; an
   attribute that is neither `name` nor a port name (a reserved attribute
   such as `_skipIf`); a subtree node with an attribute other than `ID`
   (O-17 a, b);
-- a subtree whose `ID` has a declared `SubTree` model (O-17 f);
-- a used declared model with a port `default`, port description text or
-  `<MetadataFields>` (O-17 e); a declared model, used, whose `ID` is a
-  built-in's (O-17 i);
+- a subtree whose `ID` has a declared `SubTree` model, and a node named
+  after a declared `SubTree` model (O-17 f); `<SubTreePlus>` in V4 mode,
+  which v4 does not build in, is an undeclared node;
+- a used declared model with a port `default` (empty or not), port
+  description text, `<MetadataFields>`, `editable` other than `"true"`,
+  any other attribute or child element, or a port named like a reserved
+  attribute such as `name` (O-17 e); a declared model, used, whose `ID` is
+  a built-in's (O-17 i); an attribute on `<TreeNodesModel>`;
 - an attribute value containing a tab or a line break;
+- a DOCTYPE, a processing instruction, a byte-order mark or CDATA
+  anywhere, and text outside a node (rule 5 covers comments; rule 3 covers
+  text inside a node);
 - in V4 mode, a node type that is neither built in nor declared
   (`UndeclaredNode`, §3.5);
 - in V3 mode: a v4 built-in the record does not place (only `Sequence`,
