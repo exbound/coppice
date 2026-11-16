@@ -134,8 +134,9 @@ deliberate change of its own.
 ## D10. Command-line surface — Provisional
 
 Verbs map one-to-one onto features, so each is testable on its own:
-`check` (parse and diagnostics), `save` and `save-as` (lossless by default;
-`--reference` for the reference application's canonical output, which for
+`check` (parse and diagnostics), `save` and `save-as` (`save-as` is lossless
+by default, and `save` exists only with `--reference`, since nothing edits a
+document yet; `--reference` for the reference application's canonical output, which for
 a project is an export to a directory), `log dump`, `log write`, `monitor`
 (a terminal view), `record`. Lossless is the default by the operator's
 decision of 2026-11-15: a user's comments and formatting are never lost
@@ -155,13 +156,18 @@ In place now:
 - `save <tree-file> --reference` rewrites the file in place as the
   reference saves it: within a project with `--project <project-file>`
   (F6, F7), or standalone (F9). `save` without `--reference` is a usage
-  error, since a lossless save of an unedited file changes nothing.
+  error, since a lossless save of an unedited file changes nothing. It
+  keeps the file's permissions, and refuses a symbolic link, a read-only
+  file and a file with more than one hard link, where replacing the file
+  would lose what the user expects kept.
 - `log dump <file.btlog>` prints the header and one tab-separated line per
   record, with its absolute time and the node's previous status (F11). On
   a damaged file it prints what was read before the damage.
 - Every file the CLI writes appears complete or not at all.
 - Exit codes: 0 done, 1 the input has a problem or was refused, 2 the
-  command line is wrong.
+  command line is wrong (an unknown or repeated option, a missing or empty
+  option value, an argument that is not UTF-8). Output cut short by its
+  reader, as by `| head`, ends the run quietly with 0.
 
 Not yet: `log write` (no input form is specified), `monitor` and `record`
 (with F13 to F16), a reference project export (F8, waiting on O-18), and

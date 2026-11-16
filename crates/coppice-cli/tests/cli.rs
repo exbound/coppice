@@ -246,7 +246,10 @@ fn log_dump_prints_the_header_and_each_record() {
     );
     // uid 7 is not in the XML.
     let err = stderr(&out);
-    assert!(err.contains("UnknownUid { uid: 7 }"), "{err}");
+    assert!(
+        err.contains(": byte 118: no node in the XML has uid 7"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -302,5 +305,238 @@ fn columns_count_characters() {
     assert!(
         err.contains(&format!("{}:2:18: UnknownPort: ", file.display())),
         "{err}"
+    );
+}
+
+fn copy_dir(from: &str, to: &Path) {
+    for entry in fs::read_dir(fixture(from)).unwrap() {
+        let entry = entry.unwrap();
+        fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+    }
+}
+
+/// Copies a fixture project, saves one tree in place with `flags`, and
+/// compares it with the reference's output.
+fn project_row(name: &str, from: &str, project: &str, tree: &str, want: &str, flags: &[&str]) {
+    let dir = scratch(name);
+    copy_dir(from, &dir);
+    let mut args = vec![
+        "save".to_owned(),
+        dir.join(tree).to_str().unwrap().to_owned(),
+        "--reference".to_owned(),
+        "--project".to_owned(),
+        dir.join(project).to_str().unwrap().to_owned(),
+    ];
+    args.extend(flags.iter().map(|f| (*f).to_owned()));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = coppice(&args);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        fs::read(dir.join(tree)).unwrap(),
+        fs::read(fixture(want)).unwrap(),
+        "{name}"
+    );
+}
+
+#[test]
+fn v3_mode_save_writes_what_the_reference_wrote() {
+    project_row(
+        "cli-v3",
+        "reference/o-answers-2/in-o12-v3",
+        "proj.btproj",
+        "tree.xml",
+        "reference/o-answers-2/out-o12/tree.xml",
+        &["--v3"],
+    );
+}
+
+#[test]
+fn a_switched_target_writes_what_the_reference_wrote() {
+    project_row(
+        "cli-target",
+        "reference/o-answers-2/in-o16-stamps",
+        "proj-411.btproj",
+        "t411.xml",
+        "reference/o-answers-2/out-o16a/t411.xml",
+        &["--target", "4.11"],
+    );
+}
+
+#[test]
+fn a_standalone_save_replaces_the_file_atomically_and_keeps_its_mode() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let dir = scratch("cli-save-standalone");
+    let file = dir.join("in-o5-single.xml");
+    fs::copy(fixture("reference/o-answers/in-o5-single.xml"), &file).unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    let before = fs::metadata(&file).unwrap().ino();
+    let out = run(&[Path::new("save"), &file, Path::new("--reference")]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        fs::read(&file).unwrap(),
+        fs::read(fixture("reference/o-answers/out-o5/in-o5-single.xml")).unwrap()
+    );
+    let meta = fs::metadata(&file).unwrap();
+    // A new file was renamed into place, not the old one rewritten.
+    assert_ne!(meta.ino(), before);
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+}
+
+#[test]
+fn save_refuses_what_it_cannot_replace_safely() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = scratch("cli-save-unsafe");
+    let real = dir.join("real.xml");
+    let input = fs::read(fixture("reference/o-answers/in-o5-single.xml")).unwrap();
+    fs::write(&real, &input).unwrap();
+
+    let link = dir.join("link.xml");
+    symlink(&real, &link).unwrap();
+    let out = run(&[Path::new("save"), &link, Path::new("--reference")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("is a symbolic link"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    let hard = dir.join("hard.xml");
+    fs::hard_link(&real, &hard).unwrap();
+    let out = run(&[Path::new("save"), &real, Path::new("--reference")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("more than one hard link"),
+        "{}",
+        stderr(&out)
+    );
+    fs::remove_file(&hard).unwrap();
+
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o444)).unwrap();
+    let out = run(&[Path::new("save"), &real, Path::new("--reference")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("is read-only"), "{}", stderr(&out));
+
+    assert_eq!(fs::read(&real).unwrap(), input);
+    let mut names: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["link.xml", "real.xml"]);
+}
+
+#[test]
+fn malformed_command_lines_exit_2() {
+    let file = fixture("reference/o-answers/in-o5-single.xml");
+    let f = file.to_str().unwrap();
+    for args in [
+        vec!["save-as", f, "/x", "--reference", "--target", "--v3"],
+        vec!["save-as", f, "/x", "--reference", "--target", ""],
+        vec!["save-as", f, "/x", "--reference", "--reference"],
+        vec!["save-as", f, "/x", "--reference", "--v3", "--v3"],
+        vec![
+            "save-as",
+            f,
+            "/x",
+            "--reference",
+            "--target",
+            "4.9",
+            "--target",
+            "4.10",
+        ],
+        vec!["save", f, "--reference", "--project", "--v3"],
+    ] {
+        let out = coppice(&args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+    }
+}
+
+#[test]
+fn a_non_utf8_argument_is_a_usage_error() {
+    use std::os::unix::ffi::OsStrExt;
+    let out = Command::new(env!("CARGO_BIN_EXE_coppice"))
+        .arg("check")
+        .arg(std::ffi::OsStr::from_bytes(b"\xff.xml"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("valid UTF-8"));
+}
+
+#[test]
+fn a_closed_output_ends_log_dump_quietly() {
+    use std::process::Stdio;
+    let dir = scratch("cli-log-pipe");
+    let file = dir.join("big.btlog");
+    let records: Vec<(u64, u16, u8)> = (0..50_000).map(|i| (i, 1, 1)).collect();
+    fs::write(&file, btlog(&records, b"")).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_coppice"))
+        .args(["log", "dump", file.to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("panicked"));
+}
+
+#[test]
+fn a_parse_error_has_a_line_and_column() {
+    let dir = scratch("cli-parse");
+    let file = dir.join("bad.xml");
+    fs::write(&file, "<root BTCPP_format=\"4\">\n  <a></b>\n</root>").unwrap();
+    let out = run(&[Path::new("check"), &file]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = stderr(&out);
+    assert!(
+        err.starts_with(&format!("coppice: {}:2:6: ", file.display())),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_byte_order_mark_is_not_a_column() {
+    let dir = scratch("cli-bom");
+    let file = dir.join("t.xml");
+    fs::write(
+        &file,
+        "\u{feff}<root BTCPP_format=\"4\"><BehaviorTree ID=\"T\"><AlwaysSuccess bogus=\"1\"/></BehaviorTree></root>",
+    )
+    .unwrap();
+    let err = stderr(&run(&[Path::new("check"), &file]));
+    // `bogus` is the 60th character after the mark.
+    assert!(
+        err.contains(&format!("{}:1:60: UnknownPort", file.display())),
+        "{err}"
+    );
+}
+
+#[test]
+fn log_dump_diagnostics_are_plain_text() {
+    let dir = scratch("cli-log-diag");
+    let file = dir.join("run.btlog");
+    let mut bytes = b"BTCPP4-FileLogger2\x01".to_vec();
+    let xml = b"<root><a></b></root>";
+    bytes.extend_from_slice(&(xml.len() as i32).to_le_bytes());
+    bytes.extend_from_slice(xml);
+    bytes.extend_from_slice(&0i64.to_le_bytes());
+    fs::write(&file, &bytes).unwrap();
+    let out = run(&[Path::new("log"), Path::new("dump"), &file]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        stderr(&out),
+        format!(
+            "{}: byte 32: the XML does not parse (end tag </b> at byte 9 does not close <a>, counting from the XML's start); uids are not checked\n",
+            file.display()
+        )
     );
 }
