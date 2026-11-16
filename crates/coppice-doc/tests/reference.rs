@@ -49,12 +49,13 @@ fn save_as(input: &str, output: &str) {
 fn project_save(project: &str, tree: &str, output: &str, options: &ReferenceOptions) {
     let p = Project::load(&fixtures().join(project)).unwrap();
     let want = std::fs::canonicalize(fixtures().join(tree)).unwrap();
-    let d = p
+    let index = p
         .documents()
         .iter()
-        .find(|d| d.canonical_path == want)
+        .position(|d| d.canonical_path == want)
         .unwrap_or_else(|| panic!("{tree} is not in {project}"));
-    let w = write_tree(&d.tree, &p.models(), options)
+    let w = p
+        .write_reference(index, options)
         .unwrap_or_else(|e| panic!("{tree}: refused: {e:#?}"));
     assert_bytes(&w.text, &read(output), tree);
 }
@@ -1007,4 +1008,72 @@ fn declared_async_controls_count_toward_the_reactive_sequence_rule() {
         .collect();
     // ...but an Action with a child is its own refusal.
     assert_eq!(r, [DiagnosticKind::LeafWithChildren]);
+}
+
+/// An in-memory file set for project tests.
+struct Mem(std::collections::HashMap<PathBuf, Vec<u8>>);
+
+impl coppice_doc::Files for Mem {
+    fn open(&mut self, path: &std::path::Path) -> std::io::Result<(PathBuf, Vec<u8>)> {
+        self.0
+            .get(path)
+            .map(|b| (path.to_owned(), b.clone()))
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+    }
+}
+
+#[test]
+fn a_project_save_refuses_the_projects_model_diagnostics() {
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="A"><input_port name="x"/></Action>"#,
+        r#"<Action ID="C"><input_port name="x"/><input_port type="int"/></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><Sequence><A x="1"/><C x="2"/></Sequence></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="A"><input_port name="x"/><output_port name="y" type="bool"/></Action></TreeNodesModel>"#,
+    ));
+    let mut files = Mem([("/p/proj.btproj", &proj), ("/p/b.xml", &b)]
+        .into_iter()
+        .map(|(k, v)| (PathBuf::from(k), v.as_bytes().to_vec()))
+        .collect());
+    let p = Project::load_from(std::path::Path::new("/p/proj.btproj"), &mut files).unwrap();
+    let refused: Vec<_> = p
+        .write_reference(1, &ReferenceOptions::default())
+        .unwrap_err()
+        .iter()
+        .map(|d| (d.document, d.diagnostic.kind))
+        .collect();
+    // C's nameless port in the project file, and A declared again in b.xml.
+    assert_eq!(
+        refused,
+        [
+            (0, DiagnosticKind::IncompleteModel),
+            (1, DiagnosticKind::DuplicateModel),
+        ]
+    );
+    // An unrelated problem elsewhere in the project does not block a save.
+    let proj = v4(r#"<include path="b.xml"/><include path="missing.xml"/>"#);
+    let b = tree_of("<AlwaysSuccess/>");
+    let mut files = Mem([("/p/proj.btproj", &proj), ("/p/b.xml", &b)]
+        .into_iter()
+        .map(|(k, v)| (PathBuf::from(k), v.as_bytes().to_vec()))
+        .collect());
+    let p = Project::load_from(std::path::Path::new("/p/proj.btproj"), &mut files).unwrap();
+    assert!(p.write_reference(1, &ReferenceOptions::default()).is_ok());
+    // ...but a problem in the document being saved does.
+    let b = tree_of(r#"<SubTree ID="Gone"/>"#);
+    let mut files = Mem([("/p/proj.btproj", &proj), ("/p/b.xml", &b)]
+        .into_iter()
+        .map(|(k, v)| (PathBuf::from(k), v.as_bytes().to_vec()))
+        .collect());
+    let p = Project::load_from(std::path::Path::new("/p/proj.btproj"), &mut files).unwrap();
+    let refused: Vec<_> = p
+        .write_reference(1, &ReferenceOptions::default())
+        .unwrap_err()
+        .iter()
+        .map(|d| (d.document, d.diagnostic.kind))
+        .collect();
+    assert_eq!(refused, [(1, DiagnosticKind::UnknownSubTree)]);
 }

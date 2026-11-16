@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::reference::{ReferenceOptions, Written, write_tree};
 use crate::tree::{
     Diagnostic, DiagnosticKind, NodeModel, NotATreeDocument, TreeDocument, model_lookup,
 };
@@ -372,6 +373,53 @@ impl Project {
             }),
             _ => None,
         }
+    }
+
+    /// Write document `document` as the reference writes a tree file
+    /// saved through this project (spec §3.2), with the project's merged
+    /// models.
+    ///
+    /// Refuses, besides what [`write_tree`] refuses, any diagnostic of this
+    /// project in that document (project-level ones included, such as a
+    /// subtree that names no tree) and any model diagnostic in any document
+    /// (a malformed, repeated or duplicate model decides what the model
+    /// block holds; spec §3.7). Use this rather than [`write_tree`] with
+    /// [`Project::models`], which checks the document on its own.
+    pub fn write_reference(
+        &self,
+        document: usize,
+        options: &ReferenceOptions,
+    ) -> Result<Written, Vec<ProjectDiagnostic>> {
+        let Some(d) = self.documents.get(document) else {
+            return Err(Vec::new());
+        };
+        let blocking: Vec<ProjectDiagnostic> = self
+            .diagnostics()
+            .into_iter()
+            .filter(|p| {
+                p.document == document
+                    || matches!(
+                        p.diagnostic.kind,
+                        DiagnosticKind::UnknownModelKind
+                            | DiagnosticKind::IncompleteModel
+                            | DiagnosticKind::DuplicateModelsBlock
+                            | DiagnosticKind::DuplicateModel
+                            | DiagnosticKind::ModelShadowsBuiltin
+                    )
+            })
+            .collect();
+        if !blocking.is_empty() {
+            return Err(blocking);
+        }
+        write_tree(&d.tree, &self.models(), options).map_err(|refusals| {
+            refusals
+                .into_iter()
+                .map(|diagnostic| ProjectDiagnostic {
+                    document,
+                    diagnostic,
+                })
+                .collect()
+        })
     }
 
     /// Everything worth reporting across the project, sorted by document

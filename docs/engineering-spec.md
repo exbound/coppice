@@ -408,7 +408,9 @@ V3 mode too (§3.5). Fixture paths in this section are under
    and case-insensitive order agree; coppice uses byte order, a
    **HYPOTHESIS**); each entry is `<Kind ID="…" [editable="true"]>` with
    its ports as children, in declaration order, each
-   `<input_port|output_port|inout_port name="…" [type="…"]/>`, where
+   `<input_port|output_port|inout_port name="…" [type="…"]/>` (only
+   `input_port` rows appear in any written block, so the same layout for
+   the other two directions is a **HYPOTHESIS**, §7, O-17 m), where
    `editable` and `type` are written when the declaration has them
    (`o-answers-2/out-o10/tree.xml`: no `editable`;
    `o-answers-2/out-o14/tree.xml`: `editable="true"`);
@@ -642,6 +644,13 @@ hypothesis elsewhere. It refuses:
   built in); and an undeclared node type that has children or is used
   with different attributes (O-17 h).
 
+A save through a project (`Project::write_reference`) also refuses any
+project diagnostic in the document being saved (a subtree naming no tree
+among them, §2.3.1), and any model diagnostic in any document of the
+project, since the project's models fill the model block. A problem
+elsewhere in the project that does not touch models, such as an
+unreadable include, does not block the save.
+
 The writer checks what it writes, not only what the diagnostics checked:
 every source attribute of a node must be written with its value (rule 6
 drops none), or the save is refused, and a subtree node whose element
@@ -873,7 +882,7 @@ public research record before it enters this spec (see `clean-room.md`).
 | O-10 to O-16 | answered (`dossiers/groot2-o-answers-2.md`), with the remainders split out below | — | — |
 | O-3 | V3 TreeNodesModel rule: which models are embedded on a fresh save and which are dropped | L3 (not v1) | input/output pairs covering built-in, declared-custom and included models |
 | O-7 | The reference's reconnect back-off after a publisher restart | F13 | a timing description; non-blocking (coppice's own policy stands) |
-| O-17 | Writer cases the fixtures do not cover: (a) which ports of a **built-in** node are written, in what order, and whether unset ones are written empty (e.g. `Sleep`, `Repeat`, `RetryUntilSuccessful`, `SubTree` with and without `_autoremap`); (b) attributes that are neither `name` nor a port: `ID` on the explicit `<Action ID="…">` form, `_skipIf` and the other reserved attributes, subtree remappings; (c) root attributes other than the format, version and project name, such as `main_tree_to_execute`; (d) `<include>` in a tree file; (e) a port's `default` attribute and description text in the written model block; (f) model selection for the explicit form and for subtree models; (g) whether a tag with one long attribute value wraps; (h) the V3-mode model importer's defaults beyond one node with one attribute, and which node types V3 mode treats as built-in; (i) whether a declared model that agrees with a built-in is refused; (j) a V4 save of a node whose declared model's ports, or `name`, are set out of order in the source; (k) whether the reference refuses an attribute that is not a port of a **declared** model; (l) the model block's sort key for IDs differing in case | F6, F7, F9 | one saved input per case |
+| O-17 | Writer cases the fixtures do not cover: (a) which ports of a **built-in** node are written, in what order, and whether unset ones are written empty (e.g. `Sleep`, `Repeat`, `RetryUntilSuccessful`, `SubTree` with and without `_autoremap`); (b) attributes that are neither `name` nor a port: `ID` on the explicit `<Action ID="…">` form, `_skipIf` and the other reserved attributes, subtree remappings; (c) root attributes other than the format, version and project name, such as `main_tree_to_execute`; (d) `<include>` in a tree file; (e) a port's `default` attribute and description text in the written model block; (f) model selection for the explicit form and for subtree models; (g) whether a tag with one long attribute value wraps; (h) the V3-mode model importer's defaults beyond one node with one attribute, and which node types V3 mode treats as built-in; (i) whether a declared model that agrees with a built-in is refused; (j) a V4 save of a node whose declared model's ports, or `name`, are set out of order in the source; (k) whether the reference refuses an attribute that is not a port of a **declared** model; (l) the model block's sort key for IDs differing in case; (m) how `output_port` and `inout_port` rows are written in a model block | F6, F7, F9 | one saved input per case |
 | O-18 | Project export: which tree files are written to the destination, and how include paths are rewritten. The two recorded sessions differ (copy and flatten in O-2, O-4 and O-6; project file only, includes repointed, in O-11/12/14/16); the candidate variables are the export dialog's per-row selection, whether the trees were opened or modified before the export, and the dialog's pre-filled destination | F8 | the same project exported with its rows selected and not selected |
 
 ## 8. Compatibility oracle
