@@ -1,0 +1,15 @@
+[package]
+name = "coppice-monitor"
+description = "Live-monitor client: the publisher wire protocol (engineering spec F13-F16)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+coppice-btlog = { path = "../coppice-btlog" }
+
+[lints]
+workspace = true

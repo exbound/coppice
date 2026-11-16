@@ -35,6 +35,8 @@ V4 or V3 mode, refusing what the research record does not cover), and part
 of F10 (dialect suggestion and diagnostics, on a document or a whole
 project). In `crates/coppice-btlog`: F11 and F12 (reading and writing
 `.btlog` recordings, checked against BehaviorTree.CPP 4.9.0's own logger).
+In `crates/coppice-monitor`: the live-monitor wire codec (spec §5: headers,
+reply checks, STATUS decoding, transition drains), without a transport yet.
 The `coppice` binary exposes them as `check`, `save`, `save-as` and
 `log dump` (see [`docs/design-decisions.md`](docs/design-decisions.md)
 D10):

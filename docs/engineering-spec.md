@@ -39,7 +39,9 @@ Library and architecture choices are in
 Conventions: **ESTABLISHED** = stated in a source above, with its citation;
 **HYPOTHESIS** = an inference from a cited source that a test must confirm;
 **OPEN** = not in the public record, listed in §7. Byte layouts are
-little-endian throughout.
+little-endian throughout. The open-source publisher and logger write host
+byte order (BT 4.9.0 `include/behaviortree_cpp/loggers/groot2_protocol.h:145-148`),
+which is little-endian on the platforms they are built for in practice.
 
 ## 1. Feature inventory
 
@@ -63,10 +65,10 @@ behavior) / *implemented* / *verified* (the §8 oracle passes). `full` /
 | F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Across a project (F3, §2.3.1): nodes checked against the project's merged models, plus include problems, replaced trees, an unknown main tree and subtrees that name no tree. Not yet on logs or the monitor tree | partial — the first set's F10 reference fixtures (the leaf-with-child trees) and inline inputs; the second set's leaf-with-child inputs; and its two unknown-port inputs (a built-in `Script` attribute), checked against the built-in port lists taken from the library source (`tests/reference.rs`) | §2.5, §3.6 |
 | F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | yes: `crates/coppice-btlog` | partial: the F11 row of §8 passes against BehaviorTree.CPP 4.9.0's `FileLogger2` (`crates/coppice-btlog/tests/oracle.rs`, run by `just oracle`), plus synthetic buffers (`tests/btlog.rs`); no log written by the reference's own recorder is in the record | §4.1 |
 | F12 | Write `.btlog` | C2 | yes (surface §1) | yes: `crates/coppice-btlog`, with atomic file output | partial: the F12 row of §8, byte-exact against `FileLogger2`; whether the reference opens coppice's files is queued for the analysis side | §4.2 |
-| F13 | Monitor client: connect, FULLTREE, STATUS polling, heartbeat | C6 | yes (surface §2, dossier G-4/G-5) | none | none | §5.1–5.4 |
-| F14 | Monitor client: decode the STATUS buffer, including `10+prev` | C6 | yes (surface §2, dossier G-4) | none | none | §5.4 |
-| F15 | Monitor client: blackboard request and MessagePack-JSON decode | C6 | yes (surface §2) | none | none | §5.5 |
-| F16 | Monitor client: record a live session to `.btlog` | C2/C6 | yes (surface §2, dossier G-2) | none | none | §5.6 |
+| F13 | Monitor client: connect, FULLTREE, STATUS polling, heartbeat | C6 | yes (surface §2, dossier G-4/G-5) | partial: the request and reply headers and the reply checks of §5.2 (`crates/coppice-monitor`); no transport yet, so no reconnect | partial: synthetic buffers only (`tests/wire.rs`) | §5.1–5.4 |
+| F14 | Monitor client: decode the STATUS buffer, including `10+prev` | C6 | yes (surface §2, dossier G-4) | yes: `decode_status` | partial: synthetic buffers, including 10 and out-of-range bytes; not yet against a publisher | §5.4 |
+| F15 | Monitor client: blackboard request and MessagePack-JSON decode | C6 | yes (surface §2) | partial: the request payload only; no reply decoder | partial: synthetic payloads only | §5.5 |
+| F16 | Monitor client: record a live session to `.btlog` | C2/C6 | yes (surface §2, dossier G-2) | partial: the recording payloads, the start reply and the transition drain with its possible-gap flag | partial: synthetic buffers only | §5.6 |
 
 ### Later — enumerated now so the core does not preclude them
 
@@ -766,14 +768,14 @@ Requests and replies are ZMQ multipart messages.
 |-----|------|----------------|---------------|
 | `T` | FULLTREE | header | tree XML (runtime form, fixed for the publisher's lifetime) |
 | `S` | STATUS | header | status buffer (§5.4) |
-| `B` | BLACKBOARD | header + `;`-separated names | MessagePack of a JSON object `{name → dump}` |
+| `B` | BLACKBOARD | header + `;`-separated names | MessagePack of a JSON object `{name → dump}`; MessagePack nil when no name matches (BT 4.9.0 `src/loggers/groot2_publisher.cpp:304-313`) |
 | `I` | HOOK_INSERT | header + hook JSON, object or array | none |
 | `R` | HOOK_REMOVE | header + `{"uid":n,"position":p}` | none |
 | `U` | BREAKPOINT_UNLOCK | header + `{"uid","desired_status","position","remove_when_done"}` | none |
 | `D` | HOOKS_DUMP | header | JSON array of hooks |
 | `A` | REMOVE_ALL_HOOKS | header | none |
 | `X` | DISABLE_ALL_HOOKS | header | none |
-| `r` | TOGGLE_RECORDING | header + `start` or `stop` | `start`: the epoch in µs, as a decimal string; `stop`: none |
+| `r` | TOGGLE_RECORDING | header + `start` or `stop` | `start`: the epoch in µs, as a decimal string; `stop`: none; any other payload: none, and no effect (`:445-463`) |
 | `t` | GET_TRANSITIONS | header | packed 9-byte records (as §4); the buffer is cleared by the read |
 | `N` | BREAKPOINT_REACHED | — | published on SUB: the node uid as a decimal string |
 
@@ -818,7 +820,8 @@ v1 sends `T`, `S`, `B`, `r` and `t`. The hook tags are L1, specified in §5.7.
 - The request's frame 2 lists subtree names separated by `;` (a name is an
   instance name or a tree ID). The reply is **MessagePack** of a JSON
   object mapping each name to its blackboard dump. A name with no matching
-  subtree is skipped: it is absent from the reply, which is not an error
+  subtree is skipped: it is absent from the reply, which is not an error.
+  When no name matches, the reply is a MessagePack nil, not an empty map
   (BT 4.9.0 `src/loggers/groot2_publisher.cpp:546-565`, the `find` check
   at `:555`).
 - Values are arbitrary JSON: nested objects, arrays and numbers. coppice
