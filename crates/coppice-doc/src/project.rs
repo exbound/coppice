@@ -113,6 +113,41 @@ impl std::error::Error for LoadError {
     }
 }
 
+/// What the reference writer writes for a model (spec §3.2, the model
+/// block): its kind, `ID`, `editable`, and each port's direction, name and
+/// type, in order. `None` for a model the writer refuses, by the writer's
+/// own check (spec §3.7). A `<description>` element is dropped, not
+/// refused (spec §2.4).
+type WrittenModel<'a> = (
+    &'a crate::tree::ModelKind,
+    &'a str,
+    bool,
+    Vec<(&'a crate::tree::PortDirection, &'a str, Option<&'a str>)>,
+);
+
+fn written_form(m: &NodeModel) -> Option<WrittenModel<'_>> {
+    let mut refusals = Vec::new();
+    crate::reference::check_model(m, &mut refusals);
+    if !refusals.is_empty() {
+        return None;
+    }
+    let ports = m
+        .ports
+        .iter()
+        .map(|p| (&p.direction, p.name.as_str(), p.type_name.as_deref()))
+        .collect();
+    Some((&m.kind, m.id.as_str(), m.editable, ports))
+}
+
+/// Whether one of two declarations of a model, in either order, is the
+/// reference writer's copy of the other: both write the same, and at most
+/// one has a `<description>` (the writer's copy never does, and two
+/// descriptions cannot be compared, as the view does not keep their text).
+fn written_copy(a: &NodeModel, b: &NodeModel) -> bool {
+    !(a.has_description && b.has_description)
+        && written_form(a).is_some_and(|w| Some(w) == written_form(b))
+}
+
 /// A loaded project (spec §2.3.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
@@ -514,17 +549,23 @@ impl Project {
         }
 
         // A model declared again in a later document, reported at its first
-        // declaration in that document. Repeats within one document are
-        // already reported by that document.
-        let mut first_in: HashMap<String, usize> = HashMap::new();
+        // declaration in that document, unless each declaration so far is
+        // the reference writer's copy of it or the other way round: a tree
+        // file saved in reference mode repeats the project's models in its
+        // own block (spec §2.3.1). Repeats within one document are already
+        // reported by that document.
+        let mut first_in: HashMap<String, (usize, Vec<NodeModel>)> = HashMap::new();
         for (document, d) in self.documents.iter().enumerate() {
             let mut here: HashSet<String> = HashSet::new();
             for m in d.tree.models() {
                 if !here.insert(m.id.clone()) {
                     continue;
                 }
-                match first_in.get(&m.id) {
-                    Some(&first) => push(
+                match first_in.get_mut(&m.id) {
+                    Some((_, earlier)) if earlier.iter().all(|e| written_copy(e, &m)) => {
+                        earlier.push(m);
+                    }
+                    Some(&mut (first, _)) => push(
                         document,
                         DiagnosticKind::DuplicateModel,
                         m.offset,
@@ -535,7 +576,7 @@ impl Project {
                         ),
                     ),
                     None => {
-                        first_in.insert(m.id, document);
+                        first_in.insert(m.id.clone(), (document, vec![m]));
                     }
                 }
             }

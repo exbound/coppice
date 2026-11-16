@@ -165,6 +165,22 @@ fn reference_save_in_a_project_writes_what_the_reference_wrote() {
         fs::read(dir.join("tree.xml")).unwrap(),
         fs::read(fixture("reference/o-answers-2/out-o14/tree.xml")).unwrap()
     );
+    // The saved tree now repeats the project's model in its own block; the
+    // next save in the same project still goes through (#12).
+    let out = run(&[
+        Path::new("save"),
+        &dir.join("unused.xml"),
+        Path::new("--reference"),
+        Path::new("--project"),
+        &dir.join("proj.btproj"),
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        fs::read(dir.join("unused.xml")).unwrap(),
+        fs::read(fixture("reference/o-answers-2/out-o14/unused.xml")).unwrap()
+    );
+    let out = run(&[Path::new("check"), &dir.join("proj.btproj")]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     // A file outside the project is refused.
     fs::copy(dir.join("unused.xml"), dir.join("other.xml")).unwrap();
     let out = run(&[
@@ -671,8 +687,7 @@ fn a_file_swapped_during_a_save_is_not_replaced() {
 
 #[test]
 fn reference_save_of_the_other_tree_writes_what_the_reference_wrote() {
-    // A fresh copy: a saved tree file declares its models itself, which
-    // then duplicates the project's declaration.
+    // From a fresh copy, as the reference saved it.
     project_row(
         "cli-save-project-unused",
         "reference/o-answers-2/in-o14-models",
@@ -694,4 +709,89 @@ fn a_file_rewritten_during_a_save_is_not_replaced() {
         std::thread::sleep(std::time::Duration::from_millis(10));
         fs::write(&path, content).unwrap();
     });
+}
+
+#[test]
+fn saves_follow_each_other_when_the_project_describes_its_models() {
+    // The reference writer drops a model's <description>, so the saved tree
+    // file's copy lacks it; the project still loads clean afterwards (#12).
+    let dir = scratch("cli-save-described");
+    copy_dir("reference/o-answers-2/in-o14-models", &dir);
+    let project = dir.join("proj.btproj");
+    let text = fs::read_to_string(&project).unwrap().replace(
+        "      <input_port name=\"p\"/>",
+        "      <description>moves the arm</description>\n      <input_port name=\"p\"/>",
+    );
+    assert!(text.contains("moves the arm"));
+    fs::write(&project, text).unwrap();
+    for (tree, want) in [
+        ("tree.xml", "reference/o-answers-2/out-o14/tree.xml"),
+        ("unused.xml", "reference/o-answers-2/out-o14/unused.xml"),
+    ] {
+        let out = run(&[
+            Path::new("save"),
+            &dir.join(tree),
+            Path::new("--reference"),
+            Path::new("--project"),
+            &project,
+        ]);
+        assert_eq!(out.status.code(), Some(0), "{tree}: {}", stderr(&out));
+        assert_eq!(
+            fs::read(dir.join(tree)).unwrap(),
+            fs::read(fixture(want)).unwrap()
+        );
+    }
+    let out = run(&[Path::new("check"), &project]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn saves_follow_each_other_when_the_models_load_after_the_tree() {
+    // The saved tree's copy of the model loads first, the described original
+    // after it.
+    let dir = scratch("cli-save-models-last");
+    copy_dir("reference/o-answers-2/in-o14-models", &dir);
+    let project = dir.join("proj.btproj");
+    fs::write(
+        &project,
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" project_name="O14">
+  <include path="tree.xml"/>
+  <include path="unused.xml"/>
+  <include path="models.xml"/>
+</root>
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("models.xml"),
+        r#"<root BTCPP_format="4">
+  <TreeNodesModel>
+    <Action ID="UnusedModel" editable="true"/>
+    <Action ID="UsedModel" editable="true">
+      <description>moves the arm</description>
+      <input_port name="p">
+      </input_port>
+    </Action>
+  </TreeNodesModel>
+</root>
+"#,
+    )
+    .unwrap();
+    for tree in ["tree.xml", "unused.xml", "tree.xml"] {
+        let out = run(&[
+            Path::new("save"),
+            &dir.join(tree),
+            Path::new("--reference"),
+            Path::new("--project"),
+            &project,
+        ]);
+        assert_eq!(out.status.code(), Some(0), "{tree}: {}", stderr(&out));
+        let out = run(&[Path::new("check"), &project]);
+        assert_eq!(out.status.code(), Some(0), "after {tree}: {}", stderr(&out));
+    }
+    assert_eq!(
+        fs::read(dir.join("tree.xml")).unwrap(),
+        fs::read(fixture("reference/o-answers-2/out-o14/tree.xml")).unwrap()
+    );
 }

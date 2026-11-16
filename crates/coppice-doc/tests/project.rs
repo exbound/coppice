@@ -562,7 +562,9 @@ fn a_long_chain_of_includes_does_not_exhaust_the_stack() {
 #[test]
 fn a_model_repeated_within_a_later_document_is_reported_once_per_declaration() {
     let main = root(r#"<include path="t.xml"/><TreeNodesModel><Action ID="M"/></TreeNodesModel>"#);
-    let t = root(r#"<TreeNodesModel><Action ID="M"/><Condition ID="M"/></TreeNodesModel>"#);
+    let t = root(
+        r#"<TreeNodesModel><Action ID="M" editable="true"/><Condition ID="M"/></TreeNodesModel>"#,
+    );
     let mut m = Mem::with(&[("/p/main.btproj", &main), ("/p/t.xml", &t)]);
     let p = load(&mut m, "/p/main.btproj");
     // The first M in t.xml repeats the project file's; the second repeats
@@ -626,4 +628,160 @@ fn tree_lookups_do_not_rebuild_the_registry() {
     assert_eq!(p.trees().len(), N);
     let took = started.elapsed();
     assert!(took.as_secs() < 5, "lookups took {took:?}");
+}
+
+#[test]
+fn the_written_copy_in_a_later_document_is_not_reported() {
+    let model = r#"<Action ID="M" editable="true"><input_port name="a" type="int"/><output_port name="b"/></Action>"#;
+    let main = root(&format!(
+        r#"<include path="t.xml"/><TreeNodesModel>{model}</TreeNodesModel>"#
+    ));
+    // As the reference writer lays it out.
+    let t = root(
+        r#"<TreeNodesModel>
+  <Action ID="M"
+          editable="true">
+    <input_port name="a"
+                type="int"/>
+    <output_port name="b"/>
+  </Action>
+</TreeNodesModel>"#,
+    );
+    let mut m = Mem::with(&[("/p/main.btproj", &main), ("/p/t.xml", &t)]);
+    let p = load(&mut m, "/p/main.btproj");
+    assert_eq!(diags(&p), []);
+    assert_eq!(p.models()[0].offset, at(&main, "<Action"));
+    // And the other way round.
+    let swapped = root(&format!(
+        r#"<include path="m.xml"/>{}"#,
+        &t[t.find("<TreeNodesModel").unwrap()..t.rfind("</root>").unwrap()]
+    ));
+    let models = root(&format!("<TreeNodesModel>{model}</TreeNodesModel>"));
+    let mut m = Mem::with(&[("/p/main.btproj", &swapped), ("/p/m.xml", &models)]);
+    let p = load(&mut m, "/p/main.btproj");
+    assert_eq!(diags(&p), []);
+}
+
+fn duplicates_between(first: &str, later: &str) -> Vec<DiagnosticKind> {
+    let main = root(&format!(
+        r#"<include path="t.xml"/><TreeNodesModel>{first}</TreeNodesModel>"#
+    ));
+    let t = root(&format!("<TreeNodesModel>{later}</TreeNodesModel>"));
+    let mut m = Mem::with(&[("/p/main.btproj", &main), ("/p/t.xml", &t)]);
+    let p = load(&mut m, "/p/main.btproj");
+    diags(&p)
+        .into_iter()
+        .filter(|(d, k, _)| *d == 1 && *k == DiagnosticKind::DuplicateModel)
+        .map(|(_, k, _)| k)
+        .collect()
+}
+
+/// Both orders: the copy may load before or after the original.
+fn accepted(a: &str, b: &str) {
+    assert_eq!(duplicates_between(a, b), [], "{a} / {b}");
+    assert_eq!(duplicates_between(b, a), [], "{b} / {a}");
+}
+
+fn reported(a: &str, b: &str) {
+    assert_eq!(
+        duplicates_between(a, b),
+        [DiagnosticKind::DuplicateModel],
+        "{a} / {b}"
+    );
+    assert_eq!(
+        duplicates_between(b, a),
+        [DiagnosticKind::DuplicateModel],
+        "{b} / {a}"
+    );
+}
+
+#[test]
+fn a_written_copy_matches_whichever_loads_first() {
+    // The writer drops a <description> (spec §2.4).
+    accepted(
+        r#"<Action ID="M"><description>moves the arm</description><input_port name="a"/></Action>"#,
+        r#"<Action ID="M"><input_port name="a"/></Action>"#,
+    );
+    // It accepts port text that is only whitespace, and writes the port empty.
+    accepted(
+        "<Action ID=\"M\"><input_port name=\"a\">\n      </input_port></Action>",
+        r#"<Action ID="M"><input_port name="a"/></Action>"#,
+    );
+}
+
+#[test]
+fn any_difference_in_what_the_writer_writes_is_reported() {
+    let base = r#"<Action ID="M" editable="true"><input_port name="a" type="int"/><input_port name="b"/></Action>"#;
+    for other in [
+        r#"<Condition ID="M" editable="true"><input_port name="a" type="int"/><input_port name="b"/></Condition>"#,
+        r#"<Action ID="M"><input_port name="a" type="int"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><output_port name="a" type="int"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="c" type="int"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="bool"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a"/><input_port name="b"/></Action>"#,
+        r#"<Action ID="M" editable="true"><input_port name="a" type="int"/></Action>"#,
+        // A reordered port list.
+        r#"<Action ID="M" editable="true"><input_port name="b"/><input_port name="a" type="int"/></Action>"#,
+    ] {
+        reported(base, other);
+    }
+}
+
+#[test]
+fn what_the_writer_refuses_or_the_view_cannot_compare_is_always_reported() {
+    let plain = r#"<Action ID="M"><input_port name="a"/></Action>"#;
+    for other in [
+        // Port text, a default, metadata, unmodelled content: the writer
+        // refuses each, so no copy of it exists.
+        r#"<Action ID="M"><input_port name="a">the a</input_port></Action>"#,
+        r#"<Action ID="M"><input_port name="a" default="1"/></Action>"#,
+        r#"<Action ID="M"><input_port name="a"/><MetadataFields><Metadata k="1"/></MetadataFields></Action>"#,
+        r#"<Action ID="M" foo="1"><input_port name="a"/></Action>"#,
+        r#"<Action ID="M"><input_port name="a" foo="1"/></Action>"#,
+        // A port declared twice, a reserved port name, a tab in a value.
+        r#"<Action ID="M"><input_port name="a"/><input_port name="a"/></Action>"#,
+        r#"<Action ID="M"><input_port name="a"/><input_port name="name"/></Action>"#,
+        "<Action ID=\"M\"><input_port name=\"a\" type=\"x&#9;y\"/></Action>",
+    ] {
+        reported(plain, other);
+        // Even against itself.
+        reported(other, other);
+    }
+    // Two descriptions: the view keeps neither text.
+    reported(
+        r#"<Action ID="M"><description>moves the arm</description><input_port name="a"/></Action>"#,
+        r#"<Action ID="M"><description>deletes the disk</description><input_port name="a"/></Action>"#,
+    );
+}
+
+#[test]
+fn every_earlier_declaration_must_match() {
+    // A written copy, then two described originals: whatever the order, the
+    // two descriptions meet, and the later one is reported.
+    let copy = r#"<Action ID="M"><input_port name="a"/></Action>"#;
+    let one =
+        r#"<Action ID="M"><description>first meaning</description><input_port name="a"/></Action>"#;
+    let two = r#"<Action ID="M"><description>another meaning</description><input_port name="a"/></Action>"#;
+    for order in [
+        [copy, one, two],
+        [one, copy, two],
+        [one, two, copy],
+        [copy, two, one],
+    ] {
+        let doc = |m: &str| root(&format!("<TreeNodesModel>{m}</TreeNodesModel>"));
+        let main = root(r#"<include path="a.xml"/><include path="b.xml"/><include path="c.xml"/>"#);
+        let (a, b, c) = (doc(order[0]), doc(order[1]), doc(order[2]));
+        let mut m = Mem::with(&[
+            ("/p/main.btproj", &main),
+            ("/p/a.xml", &a),
+            ("/p/b.xml", &b),
+            ("/p/c.xml", &c),
+        ]);
+        let p = load(&mut m, "/p/main.btproj");
+        let duplicates: Vec<_> = diags(&p)
+            .into_iter()
+            .filter(|(_, k, _)| *k == DiagnosticKind::DuplicateModel)
+            .collect();
+        assert_eq!(duplicates.len(), 1, "{order:?}: {duplicates:?}");
+    }
 }
