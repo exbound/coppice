@@ -254,8 +254,14 @@ fn cases_the_record_does_not_cover_are_refused_where_they_occur() {
             r#"<root BTCPP_format="4" main_tree_to_execute="T"><BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree></root>"#.to_owned(),
             "main_tree_to_execute",
         ),
-        (v4(r#"<include path="x.xml"/>"#), "<include"),
-        (v4(r#"<Unknown/>"#), "<Unknown"),
+        (
+            v4(r#"<include path="x.xml"/><BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#),
+            "<include",
+        ),
+        (
+            v4(r#"<Unknown/><BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#),
+            "<Unknown",
+        ),
         (v4(r#"<BehaviorTree ID="T" extra="1"><AlwaysSuccess/></BehaviorTree>"#), "extra"),
         (v4(r#"<BehaviorTree><AlwaysSuccess/></BehaviorTree>"#), "<BehaviorTree"),
         (
@@ -1111,7 +1117,7 @@ fn a_v3_project_save_does_not_invent_a_model_an_unresolved_include_may_hold() {
                 DiagnosticKind::UnreadableInclude,
                 at(proj, r#"<include path="gone"#)
             ),
-            (1, DiagnosticKind::NotInRecord, at(t, "<A ")),
+            (1, DiagnosticKind::NotInRecord, 0),
         ]
     );
     // With every include resolved, the importer's model is written.
@@ -1162,4 +1168,62 @@ fn a_model_declared_again_in_another_document_blocks_the_save() {
 fn a_project_save_of_a_document_that_is_not_there_panics() {
     let p = project(&[("/p/t.xml", &tree_of("<AlwaysSuccess/>"))]);
     let _ = p.write_reference(9, &ReferenceOptions::default());
+}
+
+#[test]
+fn a_project_save_with_models_waits_for_every_include() {
+    // V4: t.xml declares and uses A; an unresolved include may declare A
+    // too. Every kind of unresolved include blocks the save.
+    let t = v4(
+        r#"<BehaviorTree ID="T"><A x="1"/></BehaviorTree><TreeNodesModel><Action ID="A"><input_port name="x"/></Action></TreeNodesModel>"#,
+    );
+    for (bad, kind) in [
+        (
+            r#"<include path="gone.xml"/>"#,
+            DiagnosticKind::UnreadableInclude,
+        ),
+        (
+            r#"<include path="broken.xml"/>"#,
+            DiagnosticKind::MalformedInclude,
+        ),
+        (
+            r#"<include ros_pkg="pkg" path="x.xml"/>"#,
+            DiagnosticKind::RosPackageInclude,
+        ),
+        (r#"<include/>"#, DiagnosticKind::IncompleteInclude),
+    ] {
+        let proj = v4(&format!(r#"{bad}<include path="t.xml"/>"#));
+        let p = project(&[
+            ("/p/proj.btproj", &proj),
+            ("/p/t.xml", &t),
+            ("/p/broken.xml", "<root>"),
+        ]);
+        let doc = p
+            .documents()
+            .iter()
+            .position(|d| d.path.ends_with("t.xml"))
+            .unwrap();
+        assert_eq!(
+            project_refusals(&p, doc, &ReferenceOptions::default()),
+            [
+                (0, kind, proj.find("<include").unwrap()),
+                (doc, DiagnosticKind::NotInRecord, 0),
+            ],
+            "{bad}"
+        );
+    }
+    // A tree that uses no model does not depend on the unresolved file.
+    let proj = v4(r#"<include path="gone.xml"/><include path="t.xml"/>"#);
+    let t = tree_of("<AlwaysSuccess/>");
+    let p = project(&[("/p/proj.btproj", &proj), ("/p/t.xml", &t)]);
+    assert!(p.write_reference(1, &ReferenceOptions::default()).is_ok());
+}
+
+#[test]
+fn a_file_with_no_tree_is_refused() {
+    let src = v4(r#"<TreeNodesModel><Action ID="B"/></TreeNodesModel>"#);
+    assert_eq!(
+        refusals(&src, &ReferenceOptions::default()),
+        [(DiagnosticKind::NotInRecord, 0)]
+    );
 }

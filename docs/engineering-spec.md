@@ -622,6 +622,7 @@ hypothesis elsewhere. It refuses:
   attribute that is neither `name` nor a port name (a reserved attribute
   such as `_skipIf`); a subtree node with an attribute other than `ID`
   (O-17 a, b);
+- a file with no `<BehaviorTree>` (rules 4 and 8 presuppose one);
 - a `<BehaviorTree>` or `<TreeNodesModel>` used as a node inside a tree;
 - a subtree whose `ID` has a declared `SubTree` model, and a node named
   after a declared `SubTree` model (O-17 f); `<SubTreePlus>` in V4 mode,
@@ -648,11 +649,13 @@ A save through a project (`Project::write_reference`) also refuses:
 any project diagnostic in the document being saved (a subtree naming no
 tree among them, §2.3.1); any model diagnostic in any document of the
 project, even one about a model the tree does not use, since the
-project's models fill the model block; and, in V3 mode, creating the
-importer's model while an include is unresolved, since the model may be
-declared in the file coppice could not read. Otherwise a problem
-elsewhere in the project, such as an unreadable include, does not block
-the save. A refusal about a declared model points into the document that
+project's models fill the model block; and, in either mode, a model block
+that is not empty while any include is unresolved (unreadable, malformed,
+under a ROS package, or without a path), since the file coppice could not
+read may declare a model the block holds, or the one the V3 importer
+would otherwise create. A tree whose block is empty does not depend on
+that file, and a problem elsewhere that does not touch models does not
+block the save. A refusal about a declared model points into the document that
 declared it.
 
 The writer checks what it writes, not only what the diagnostics checked:

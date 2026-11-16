@@ -61,6 +61,9 @@ pub struct Written {
     /// a prompt: a raised version stamp, a model created by the V3
     /// importer defaults.
     pub notes: Vec<Diagnostic>,
+    /// The `ID`s of the models written into the model block, sorted: the
+    /// declared models the tree uses, and any the V3 importer created.
+    pub models: Vec<String>,
 }
 
 /// The V3-mode node types the record shows getting no model (spec §3.5).
@@ -230,6 +233,15 @@ pub(crate) fn write_parts(
         }
     }
 
+    // A file with no tree: rules 4 and 8 presuppose one, and no saved
+    // tree file in the record has none.
+    if trees.is_empty() {
+        refusals.push(uncovered(
+            root.span.start,
+            "a tree file with no <BehaviorTree>".to_owned(),
+        ));
+    }
+
     // Nodes: which models they use, and anything the writer cannot write.
     let mut used: BTreeMap<String, NodeModel> = BTreeMap::new();
     let mut tree_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -374,7 +386,11 @@ pub(crate) fn write_parts(
         });
     }
     notes.sort_by_key(|d| d.offset);
-    Ok(Written { text: out, notes })
+    Ok(Written {
+        text: out,
+        notes,
+        models: used.keys().cloned().collect(),
+    })
 }
 
 enum StampChange {

@@ -384,8 +384,8 @@ impl Project {
     ///   ones included (a subtree that names no tree);
     /// - any model diagnostic in any document, since the merged models
     ///   fill the model block;
-    /// - in V3 mode, creating a model for an undeclared node while an
-    ///   include is unresolved, as the model may be declared there.
+    /// - a model block that is not empty while an include is unresolved,
+    ///   as a model it holds (or would hold) may be declared there.
     ///
     /// A refusal about a declared model points into the document that
     /// declared it.
@@ -458,27 +458,22 @@ impl Project {
                 )
             })
             .collect();
-        let created: Vec<&Diagnostic> = written
-            .notes
-            .iter()
-            .filter(|n| n.kind == DiagnosticKind::ModelCreated)
-            .collect();
-        if !created.is_empty() && !unresolved.is_empty() {
-            let mut out: Vec<ProjectDiagnostic> = created
-                .into_iter()
-                .map(|n| ProjectDiagnostic {
-                    document,
-                    diagnostic: Diagnostic {
-                        kind: DiagnosticKind::NotInRecord,
-                        offset: n.offset,
-                        message: format!(
-                            "{}; but an include is unresolved, and the model may be declared there",
-                            n.message
-                        ),
-                    },
-                })
-                .collect();
-            out.extend(unresolved);
+        // An unreadable file may declare a model the block holds (a
+        // duplicate the project would then refuse, or the declaration that
+        // would win), or the one the V3 importer would otherwise invent.
+        if !written.models.is_empty() && !unresolved.is_empty() {
+            let mut out = unresolved;
+            out.push(ProjectDiagnostic {
+                document,
+                diagnostic: Diagnostic {
+                    kind: DiagnosticKind::NotInRecord,
+                    offset: d.tree.document().root_element().span.start,
+                    message: format!(
+                        "the model block holds [{}], but an include is unresolved, and a model may be declared there",
+                        written.models.join(", ")
+                    ),
+                },
+            });
             out.sort_by_key(|p| (p.document, p.diagnostic.offset));
             return Err(out);
         }
