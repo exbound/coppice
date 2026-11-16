@@ -136,8 +136,8 @@ deliberate change of its own.
 Verbs map one-to-one onto features, so each is testable on its own:
 `check` (parse and diagnostics), `save` and `save-as` (`save-as` is lossless
 by default, and `save` exists only with `--reference`, since nothing edits a
-document yet; `--reference` for the reference application's canonical output, which for
-a project is an export to a directory), `log dump`, `log write`, `monitor`
+document yet; `--reference` for the reference application's canonical
+output, which for a project is an export to a directory), `log dump`, `log write`, `monitor`
 (a terminal view), `record`. Lossless is the default by the operator's
 decision of 2026-11-15: a user's comments and formatting are never lost
 unless they ask for reference output. A reference save of a project is
@@ -157,16 +157,19 @@ In place now:
   reference saves it: within a project with `--project <project-file>`
   (F6, F7), or standalone (F9). `save` without `--reference` is a usage
   error, since a lossless save of an unedited file changes nothing. It
-  keeps the file's permissions, and refuses a symbolic link, a read-only
-  file and a file with more than one hard link, where replacing the file
-  would lose what the user expects kept.
+  keeps the file's permissions, owner and group, and refuses a symbolic
+  link, a file its user may not write, a file with more than one hard link,
+  and a file that changed while it was being saved, where replacing the
+  file would lose what the user expects kept.
 - `log dump <file.btlog>` prints the header and one tab-separated line per
   record, with its absolute time and the node's previous status (F11). On
   a damaged file it prints what was read before the damage.
 - Every file the CLI writes appears complete or not at all.
 - Exit codes: 0 done, 1 the input has a problem or was refused, 2 the
-  command line is wrong (an unknown or repeated option, a missing or empty
-  option value, an argument that is not UTF-8). Output cut short by its
+  command line is wrong (an unknown or repeated option, a missing, empty
+  or flag-like option value, an option where a file name belongs, an
+  argument that is not UTF-8). A file whose name starts with `-` is named
+  as `./-name`. Output cut short by its
   reader, as by `| head`, ends the run quietly with 0.
 
 Not yet: `log write` (no input form is specified), `monitor` and `record`

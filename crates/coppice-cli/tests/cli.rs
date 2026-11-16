@@ -363,6 +363,7 @@ fn a_switched_target_writes_what_the_reference_wrote() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_standalone_save_replaces_the_file_atomically_and_keeps_its_mode() {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let dir = scratch("cli-save-standalone");
@@ -384,6 +385,7 @@ fn a_standalone_save_replaces_the_file_atomically_and_keeps_its_mode() {
 }
 
 #[test]
+#[cfg(unix)]
 fn save_refuses_what_it_cannot_replace_safely() {
     use std::os::unix::fs::{PermissionsExt, symlink};
     let dir = scratch("cli-save-unsafe");
@@ -459,6 +461,7 @@ fn malformed_command_lines_exit_2() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_non_utf8_argument_is_a_usage_error() {
     use std::os::unix::ffi::OsStrExt;
     let out = Command::new(env!("CARGO_BIN_EXE_coppice"))
@@ -538,5 +541,144 @@ fn log_dump_diagnostics_are_plain_text() {
             "{}: byte 32: the XML does not parse (end tag </b> at byte 9 does not close <a>, counting from the XML's start); uids are not checked\n",
             file.display()
         )
+    );
+}
+
+#[test]
+fn an_option_where_a_file_belongs_is_a_usage_error() {
+    let dir = scratch("cli-flag-operand");
+    let input = fixture("reference/o-answers/in-o5-single.xml");
+    let out = Command::new(env!("CARGO_BIN_EXE_coppice"))
+        .current_dir(&dir)
+        .args(["save-as", input.to_str().unwrap(), "--reference"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("write ./--reference"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+    for args in [
+        vec!["check", "-x"],
+        vec!["save", "-x", "--reference"],
+        vec!["log", "dump", "--x"],
+        vec!["save-as", "--reference", "a", "b"],
+    ] {
+        assert_eq!(coppice(&args).status.code(), Some(2), "{args:?}");
+    }
+    // A file whose name starts with `-` is still reachable.
+    fs::copy(&input, dir.join("-in.xml")).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_coppice"))
+        .current_dir(&dir)
+        .args(["check", "./-in.xml"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+#[cfg(unix)]
+fn a_file_its_user_cannot_write_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch("cli-save-unwritable");
+    let file = dir.join("t.xml");
+    let input = fs::read(fixture("reference/o-answers/in-o5-single.xml")).unwrap();
+    fs::write(&file, &input).unwrap();
+    // Writable by the group, not by its owner.
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o464)).unwrap();
+    let out = run(&[Path::new("save"), &file, Path::new("--reference")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("is read-only"), "{}", stderr(&out));
+    assert_eq!(fs::read(&file).unwrap(), input);
+}
+
+#[cfg(unix)]
+fn race(name: &str, meddle: impl FnOnce(&Path)) {
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let dir = scratch(name);
+    copy_dir("reference/o-answers-2/in-o14-models", &dir);
+    let project = fs::read(dir.join("proj.btproj")).unwrap();
+    fs::remove_file(dir.join("proj.btproj")).unwrap();
+    // The project is read from a pipe, so the save waits there, after its
+    // first check of the tree file.
+    let made = Command::new("mkfifo")
+        .arg(dir.join("proj.btproj"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let tree = dir.join("tree.xml");
+    let before = fs::read(&tree).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_coppice"))
+        .args([
+            "save",
+            tree.to_str().unwrap(),
+            "--reference",
+            "--project",
+            dir.join("proj.btproj").to_str().unwrap(),
+        ])
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Opening the pipe for writing waits until the save opens it to read.
+    let mut pipe = fs::OpenOptions::new()
+        .write(true)
+        .open(dir.join("proj.btproj"))
+        .unwrap();
+    meddle(&dir);
+    pipe.write_all(&project).unwrap();
+    drop(pipe);
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    // The second check, just before the rename, sees the new link.
+    assert!(stderr(&out).contains("not saved"), "{}", stderr(&out));
+    assert_eq!(fs::read(&tree).unwrap(), before);
+    assert_eq!(
+        fs::read_dir(&dir)
+            .unwrap()
+            .filter(|e| e
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp"))
+            .count(),
+        0
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_file_linked_during_a_save_is_not_replaced() {
+    race("cli-save-race-link", |dir| {
+        fs::hard_link(dir.join("tree.xml"), dir.join("backup.xml")).unwrap();
+    });
+}
+
+#[test]
+#[cfg(unix)]
+fn a_file_swapped_during_a_save_is_not_replaced() {
+    race("cli-save-race-swap", |dir| {
+        // Another program saves the file the same way: a new file renamed
+        // over it, with the same content.
+        let content = fs::read(dir.join("tree.xml")).unwrap();
+        fs::write(dir.join("other.xml"), content).unwrap();
+        fs::rename(dir.join("other.xml"), dir.join("tree.xml")).unwrap();
+    });
+}
+
+#[test]
+fn reference_save_of_the_other_tree_writes_what_the_reference_wrote() {
+    // A fresh copy: a saved tree file declares its models itself, which
+    // then duplicates the project's declaration.
+    project_row(
+        "cli-save-project-unused",
+        "reference/o-answers-2/in-o14-models",
+        "proj.btproj",
+        "unused.xml",
+        "reference/o-answers-2/out-o14/unused.xml",
+        &[],
     );
 }

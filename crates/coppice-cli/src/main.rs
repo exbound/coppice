@@ -2,7 +2,9 @@
 //! one feature of the library crates.
 
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -85,6 +87,20 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &[&str]) -> Outcome {
+    // An operand that looks like an option is a mistake far more often than
+    // a file name: `save-as in --reference` has lost its output. A file
+    // whose name starts with `-` can be named as `./-name`.
+    let operands = match args {
+        ["check" | "save", file, ..] => vec![*file],
+        ["save-as", input, output, ..] => vec![*input, *output],
+        ["log", "dump", file] => vec![*file],
+        _ => Vec::new(),
+    };
+    if let Some(bad) = operands.iter().find(|a| a.starts_with('-')) {
+        return Err(usage(format!(
+            "{bad} is where a file name belongs; write ./{bad} for a file named so"
+        )));
+    }
     match args {
         ["--version" | "-V"] => say(
             &mut io::stdout().lock(),
@@ -305,8 +321,8 @@ fn save(file: &Path, rest: &[&str]) -> Outcome {
 /// Checks that `path` can be replaced by a new file without losing
 /// anything the user would expect kept, and returns its metadata. Refused:
 /// a symbolic link (replacing it would cut the link, not save its target),
-/// a read-only file, and, on Unix, a file with more than one hard link
-/// (the other names would keep the old content).
+/// a file this user may not write, and, on Unix, a file with more than one
+/// hard link (the other names would keep the old content).
 fn replaceable(path: &Path) -> Result<fs::Metadata, Failure> {
     let meta =
         fs::symlink_metadata(path).map_err(|e| refused(format!("{}: {e}", path.display())))?;
@@ -314,7 +330,7 @@ fn replaceable(path: &Path) -> Result<fs::Metadata, Failure> {
         Some("is a symbolic link; save its target instead")
     } else if !meta.is_file() {
         Some("is not a regular file")
-    } else if meta.permissions().readonly() {
+    } else if meta.permissions().readonly() || !writable(path) {
         Some("is read-only")
     } else if hard_links(&meta) > 1 {
         Some("has more than one hard link")
@@ -325,6 +341,41 @@ fn replaceable(path: &Path) -> Result<fs::Metadata, Failure> {
         Some(why) => Err(refused(format!("{}: {why}; not saved", path.display()))),
         None => Ok(meta),
     }
+}
+
+/// Whether this user may write `path`: opening it for writing, without
+/// truncating or writing, answers that as the system would.
+fn writable(path: &Path) -> bool {
+    OpenOptions::new().write(true).open(path).is_ok()
+}
+
+/// The identity of a file, to notice it being swapped while a save runs.
+#[cfg(unix)]
+fn identity(meta: &fs::Metadata) -> (u64, u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    (meta.dev(), meta.ino(), meta.nlink())
+}
+
+#[cfg(not(unix))]
+fn identity(meta: &fs::Metadata) -> (u64, u64, u64) {
+    (meta.len(), 0, 0)
+}
+
+/// Gives the new file the old one's owner and group, where the platform has
+/// them; a user who cannot (the file is someone else's) is refused.
+#[cfg(unix)]
+fn keep_owner(temp: &Path, existing: &fs::Metadata) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let new = fs::metadata(temp)?;
+    if (new.uid(), new.gid()) == (existing.uid(), existing.gid()) {
+        return Ok(());
+    }
+    std::os::unix::fs::chown(temp, Some(existing.uid()), Some(existing.gid()))
+}
+
+#[cfg(not(unix))]
+fn keep_owner(_: &Path, _: &fs::Metadata) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -405,14 +456,41 @@ fn write_new(path: &Path, bytes: &[u8]) -> Outcome {
     Ok(())
 }
 
-/// Replaces `path` whole, atomically, keeping its permissions.
+/// Replaces `path` whole, atomically, keeping its permissions, owner and
+/// group. Just before the rename, the file is checked again, and a save is
+/// refused if it was swapped, linked or made unwritable since `existing`
+/// was taken. Between that check and the rename a short window remains,
+/// which the standard library cannot close.
 fn replace(path: &Path, existing: &fs::Metadata, bytes: &[u8]) -> Outcome {
     let temp = temporary(path, bytes)?;
-    let swapped =
-        fs::set_permissions(&temp, existing.permissions()).and_then(|()| fs::rename(&temp, path));
-    if let Err(e) = swapped {
+    let prepared = keep_owner(&temp, existing)
+        .map_err(|e| {
+            refused(format!(
+                "{}: cannot keep its owner and group: {e}",
+                path.display()
+            ))
+        })
+        .and_then(|()| {
+            fs::set_permissions(&temp, existing.permissions())
+                .map_err(|e| refused(format!("{}: {e}", path.display())))
+        })
+        .and_then(|()| {
+            let now = replaceable(path)?;
+            if identity(&now) == identity(existing) {
+                Ok(())
+            } else {
+                Err(refused(format!(
+                    "{}: changed while it was being saved; not saved",
+                    path.display()
+                )))
+            }
+        })
+        .and_then(|()| {
+            fs::rename(&temp, path).map_err(|e| refused(format!("{}: {e}", path.display())))
+        });
+    if let Err(e) = prepared {
         let _ = fs::remove_file(&temp);
-        return Err(refused(format!("{}: {e}", path.display())));
+        return Err(e);
     }
     sync_directory(directory_of(path));
     Ok(())
