@@ -1077,3 +1077,89 @@ fn a_project_save_refuses_the_projects_model_diagnostics() {
         .collect();
     assert_eq!(refused, [(1, DiagnosticKind::UnknownSubTree)]);
 }
+
+fn project(files: &[(&str, &str)]) -> Project {
+    let mut m = Mem(files
+        .iter()
+        .map(|(k, v)| (PathBuf::from(k), v.as_bytes().to_vec()))
+        .collect());
+    Project::load_from(std::path::Path::new(files[0].0), &mut m).unwrap()
+}
+
+fn project_refusals(
+    p: &Project,
+    document: usize,
+    options: &ReferenceOptions,
+) -> Vec<(usize, DiagnosticKind, usize)> {
+    p.write_reference(document, options)
+        .unwrap_err()
+        .iter()
+        .map(|d| (d.document, d.diagnostic.kind, d.diagnostic.offset))
+        .collect()
+}
+
+#[test]
+fn a_v3_project_save_does_not_invent_a_model_an_unresolved_include_may_hold() {
+    let proj = r#"<root BTCPP_format="3"><include path="t.xml"/><include path="gone.xml"/></root>"#;
+    let t = r#"<root BTCPP_format="3"><BehaviorTree ID="T"><A x="1"/></BehaviorTree></root>"#;
+    let p = project(&[("/p/proj.xml", proj), ("/p/t.xml", t)]);
+    assert_eq!(
+        project_refusals(&p, 1, &v3()),
+        [
+            (
+                0,
+                DiagnosticKind::UnreadableInclude,
+                at(proj, r#"<include path="gone"#)
+            ),
+            (1, DiagnosticKind::NotInRecord, at(t, "<A ")),
+        ]
+    );
+    // With every include resolved, the importer's model is written.
+    let proj = r#"<root BTCPP_format="3"><include path="t.xml"/></root>"#;
+    let p = project(&[("/p/proj.xml", proj), ("/p/t.xml", t)]);
+    let w = p.write_reference(1, &v3()).unwrap();
+    assert!(w.text.contains(r#"<Action ID="A""#), "{}", w.text);
+}
+
+#[test]
+fn a_refusal_about_a_model_points_into_the_document_that_declared_it() {
+    let proj = v4(
+        r#"<include path="t.xml"/><TreeNodesModel><Action ID="A"><input_port name="x" default="3"/></Action></TreeNodesModel>"#,
+    );
+    let t = tree_of(r#"<A x="1"/>"#);
+    let p = project(&[("/p/proj.btproj", &proj), ("/p/t.xml", &t)]);
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [(
+            0,
+            DiagnosticKind::NotInRecord,
+            at(&proj, r#"<Action ID="A""#)
+        )]
+    );
+}
+
+#[test]
+fn a_model_declared_again_in_another_document_blocks_the_save() {
+    // t.xml is saved; m.xml, loaded after it, declares A again.
+    let proj = v4(r#"<include path="t.xml"/><include path="m.xml"/>"#);
+    let t = v4(
+        r#"<BehaviorTree ID="T"><A/></BehaviorTree><TreeNodesModel><Action ID="A"/></TreeNodesModel>"#,
+    );
+    let m = v4(r#"<TreeNodesModel><Condition ID="A"/></TreeNodesModel>"#);
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/m.xml", &m),
+    ]);
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [(2, DiagnosticKind::DuplicateModel, at(&m, "<Condition"))]
+    );
+}
+
+#[test]
+#[should_panic]
+fn a_project_save_of_a_document_that_is_not_there_panics() {
+    let p = project(&[("/p/t.xml", &tree_of("<AlwaysSuccess/>"))]);
+    let _ = p.write_reference(9, &ReferenceOptions::default());
+}

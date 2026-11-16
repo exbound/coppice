@@ -77,6 +77,28 @@ pub fn write_tree(
     models: &[NodeModel],
     options: &ReferenceOptions,
 ) -> Result<Written, Vec<Diagnostic>> {
+    write_parts(tree, models, options).map_err(|r| {
+        let mut all = r.tree;
+        all.extend(r.models.into_iter().map(|(_, d)| d));
+        all.sort_by_key(|d| d.offset);
+        all
+    })
+}
+
+/// Why a write was refused, split by where each reason's offset points:
+/// into the tree document, or into the document that declared a model
+/// (named by its `ID`), which for a project save may be another one.
+pub(crate) struct Refused {
+    pub(crate) tree: Vec<Diagnostic>,
+    pub(crate) models: Vec<(String, Diagnostic)>,
+}
+
+/// [`write_tree`], with the refusals about declared models kept apart.
+pub(crate) fn write_parts(
+    tree: &TreeDocument,
+    models: &[NodeModel],
+    options: &ReferenceOptions,
+) -> Result<Written, Refused> {
     let mut refusals = tree.diagnostics_with_models(models);
     let mut notes = Vec::new();
     let lookup = model_lookup(models);
@@ -277,8 +299,11 @@ pub fn write_tree(
     }
 
     // The declared models must themselves be writable (rule 9).
+    let mut model_refusals: Vec<(String, Diagnostic)> = Vec::new();
     for m in used.values() {
-        check_model(m, &mut refusals);
+        let mut here = Vec::new();
+        check_model(m, &mut here);
+        model_refusals.extend(here.into_iter().map(|d| (m.id.clone(), d)));
     }
     // Attribute values the record shows no escaping for.
     let mut stack: Vec<&Element> = vec![root];
@@ -294,10 +319,14 @@ pub fn write_tree(
         }
     }
 
-    if !refusals.is_empty() {
+    if !refusals.is_empty() || !model_refusals.is_empty() {
         refusals.sort_by_key(|d| d.offset);
         refusals.dedup();
-        return Err(refusals);
+        model_refusals.dedup();
+        return Err(Refused {
+            tree: refusals,
+            models: model_refusals,
+        });
     }
 
     let mut out = String::new();
@@ -335,11 +364,14 @@ pub fn write_tree(
     // unreachable, and no known input reaches it. A writer bug that
     // produced malformed XML is refused here rather than written.
     if let Err(e) = Document::parse(out.as_bytes()) {
-        return Err(vec![Diagnostic {
-            kind: DiagnosticKind::NotInRecord,
-            offset: 0,
-            message: format!("the written output is not well-formed ({e}); not written"),
-        }]);
+        return Err(Refused {
+            tree: vec![Diagnostic {
+                kind: DiagnosticKind::NotInRecord,
+                offset: 0,
+                message: format!("the written output is not well-formed ({e}); not written"),
+            }],
+            models: Vec::new(),
+        });
     }
     notes.sort_by_key(|d| d.offset);
     Ok(Written { text: out, notes })

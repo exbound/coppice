@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::reference::{ReferenceOptions, Written, write_tree};
+use crate::reference::{ReferenceOptions, Written, write_parts};
 use crate::tree::{
     Diagnostic, DiagnosticKind, NodeModel, NotATreeDocument, TreeDocument, model_lookup,
 };
@@ -379,23 +379,29 @@ impl Project {
     /// saved through this project (spec §3.2), with the project's merged
     /// models.
     ///
-    /// Refuses, besides what [`write_tree`] refuses, any diagnostic of this
-    /// project in that document (project-level ones included, such as a
-    /// subtree that names no tree) and any model diagnostic in any document
-    /// (a malformed, repeated or duplicate model decides what the model
-    /// block holds; spec §3.7). Use this rather than [`write_tree`] with
-    /// [`Project::models`], which checks the document on its own.
+    /// Refuses, besides what [`crate::write_tree`] refuses (spec §3.7):
+    /// - any diagnostic of this project in that document, project-level
+    ///   ones included (a subtree that names no tree);
+    /// - any model diagnostic in any document, since the merged models
+    ///   fill the model block;
+    /// - in V3 mode, creating a model for an undeclared node while an
+    ///   include is unresolved, as the model may be declared there.
+    ///
+    /// A refusal about a declared model points into the document that
+    /// declared it.
+    ///
+    /// # Panics
+    ///
+    /// If `document` is not an index into [`Project::documents`].
     pub fn write_reference(
         &self,
         document: usize,
         options: &ReferenceOptions,
     ) -> Result<Written, Vec<ProjectDiagnostic>> {
-        let Some(d) = self.documents.get(document) else {
-            return Err(Vec::new());
-        };
-        let blocking: Vec<ProjectDiagnostic> = self
-            .diagnostics()
-            .into_iter()
+        let d = &self.documents[document];
+        let all = self.diagnostics();
+        let blocking: Vec<ProjectDiagnostic> = all
+            .iter()
             .filter(|p| {
                 p.document == document
                     || matches!(
@@ -407,19 +413,76 @@ impl Project {
                             | DiagnosticKind::ModelShadowsBuiltin
                     )
             })
+            .cloned()
             .collect();
         if !blocking.is_empty() {
             return Err(blocking);
         }
-        write_tree(&d.tree, &self.models(), options).map_err(|refusals| {
-            refusals
+        // Which document each merged model came from: the first to declare
+        // its ID, as `models` merges.
+        let mut origin: HashMap<String, usize> = HashMap::new();
+        for (i, doc) in self.documents.iter().enumerate() {
+            for m in doc.tree.models() {
+                origin.entry(m.id).or_insert(i);
+            }
+        }
+        let written = write_parts(&d.tree, &self.models(), options).map_err(|r| {
+            let mut out: Vec<ProjectDiagnostic> = r
+                .tree
                 .into_iter()
                 .map(|diagnostic| ProjectDiagnostic {
                     document,
                     diagnostic,
                 })
-                .collect()
-        })
+                .collect();
+            out.extend(
+                r.models
+                    .into_iter()
+                    .map(|(id, diagnostic)| ProjectDiagnostic {
+                        document: origin.get(&id).copied().unwrap_or(document),
+                        diagnostic,
+                    }),
+            );
+            out.sort_by_key(|p| (p.document, p.diagnostic.offset));
+            out
+        })?;
+        let unresolved: Vec<ProjectDiagnostic> = all
+            .into_iter()
+            .filter(|p| {
+                matches!(
+                    p.diagnostic.kind,
+                    DiagnosticKind::UnreadableInclude
+                        | DiagnosticKind::MalformedInclude
+                        | DiagnosticKind::RosPackageInclude
+                        | DiagnosticKind::IncompleteInclude
+                )
+            })
+            .collect();
+        let created: Vec<&Diagnostic> = written
+            .notes
+            .iter()
+            .filter(|n| n.kind == DiagnosticKind::ModelCreated)
+            .collect();
+        if !created.is_empty() && !unresolved.is_empty() {
+            let mut out: Vec<ProjectDiagnostic> = created
+                .into_iter()
+                .map(|n| ProjectDiagnostic {
+                    document,
+                    diagnostic: Diagnostic {
+                        kind: DiagnosticKind::NotInRecord,
+                        offset: n.offset,
+                        message: format!(
+                            "{}; but an include is unresolved, and the model may be declared there",
+                            n.message
+                        ),
+                    },
+                })
+                .collect();
+            out.extend(unresolved);
+            out.sort_by_key(|p| (p.document, p.diagnostic.offset));
+            return Err(out);
+        }
+        Ok(written)
     }
 
     /// Everything worth reporting across the project, sorted by document

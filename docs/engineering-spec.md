@@ -644,12 +644,16 @@ hypothesis elsewhere. It refuses:
   built in); and an undeclared node type that has children or is used
   with different attributes (O-17 h).
 
-A save through a project (`Project::write_reference`) also refuses any
-project diagnostic in the document being saved (a subtree naming no tree
-among them, §2.3.1), and any model diagnostic in any document of the
-project, since the project's models fill the model block. A problem
-elsewhere in the project that does not touch models, such as an
-unreadable include, does not block the save.
+A save through a project (`Project::write_reference`) also refuses:
+any project diagnostic in the document being saved (a subtree naming no
+tree among them, §2.3.1); any model diagnostic in any document of the
+project, even one about a model the tree does not use, since the
+project's models fill the model block; and, in V3 mode, creating the
+importer's model while an include is unresolved, since the model may be
+declared in the file coppice could not read. Otherwise a problem
+elsewhere in the project, such as an unreadable include, does not block
+the save. A refusal about a declared model points into the document that
+declared it.
 
 The writer checks what it writes, not only what the diagnostics checked:
 every source attribute of a node must be written with its value (rule 6
