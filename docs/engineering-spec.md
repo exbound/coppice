@@ -44,9 +44,8 @@ little-endian throughout.
 ## 1. Feature inventory
 
 Coverage triplet: *reference observed* (the research record establishes the
-behavior) / *implemented* / *verified* (the §8 oracle passes). Nothing is
-implemented yet. `full` / `partial` / `none` are meaningful only against this
-list.
+behavior) / *implemented* / *verified* (the §8 oracle passes). `full` /
+`partial` / `none` are meaningful only against this list.
 
 ### v1 — headless core and command-line tool
 
@@ -62,8 +61,8 @@ list.
 | F8 | Reference project export | C3 | partial: the project file's layout, models, stamp and include order (answers O-1, O-2, O-4, O-6, O-11, O-14, O-16); which tree files are written and how include paths are rewritten differs between the two recorded sessions (O-18) | none | none | §3.3 |
 | F9 | Reference save-as of a standalone tree: a bare canonical tree | C3 | yes (answers O-5, O-13) | yes: the same writer, with the file's own models | partial: the F9 rows of §8, byte-exact | §3.4 |
 | F10 | Dialect detection and port-versus-model diagnostics | C3 | yes (dossier WP1, WP3) | partial — on a single document: dialect suggestion, missing format, leaf with children, unknown port, misplaced node ID, malformed, duplicate or built-in-shadowing models, decided as BehaviorTree.CPP's loader decides (BT 4.9.0 `src/xml_parsing.cpp:557-677,763-850`). Across a project (F3, §2.3.1): nodes checked against the project's merged models, plus include problems, replaced trees, an unknown main tree and subtrees that name no tree. Not yet on logs or the monitor tree | partial — the first set's F10 reference fixtures (the leaf-with-child trees) and inline inputs; the second set's leaf-with-child inputs; and its two unknown-port inputs (a built-in `Script` attribute), checked against the built-in port lists taken from the library source (`tests/reference.rs`) | §2.5, §3.6 |
-| F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | none | none | §4.1 |
-| F12 | Write `.btlog` | C2 | yes (surface §1) | none | none | §4.2 |
+| F11 | Read `.btlog` | C2 | yes (surface §1, dossier WP2/G-2) | yes: `crates/coppice-btlog` | partial: the F11 row of §8 passes against BehaviorTree.CPP 4.9.0's `FileLogger2` (`crates/coppice-btlog/tests/oracle.rs`, run by `just oracle`), plus synthetic buffers (`tests/btlog.rs`); no log written by the reference's own recorder is in the record | §4.1 |
+| F12 | Write `.btlog` | C2 | yes (surface §1) | yes: `crates/coppice-btlog`, with atomic file output | partial: the F12 row of §8, byte-exact against `FileLogger2`; whether the reference opens coppice's files is queued for the analysis side | §4.2 |
 | F13 | Monitor client: connect, FULLTREE, STATUS polling, heartbeat | C6 | yes (surface §2, dossier G-4/G-5) | none | none | §5.1–5.4 |
 | F14 | Monitor client: decode the STATUS buffer, including `10+prev` | C6 | yes (surface §2, dossier G-4) | none | none | §5.4 |
 | F15 | Monitor client: blackboard request and MessagePack-JSON decode | C6 | yes (surface §2) | none | none | §5.5 |
@@ -696,15 +695,23 @@ Transition record, 9 bytes:
 ### 4.1 Reading (F11)
 
 - The magic and version are checked exactly; a mismatch is a typed error
-  naming the offset and the bytes found.
+  naming the offset and the bytes found. A file that ends inside the
+  header, the XML or T0 is a typed error naming the field's offset.
 - The file must end on a record boundary; trailing bytes are a typed error
   that still returns the records read so far.
 - Statuses are the plain enum. The `10+prev` encoding never appears in a
-  log. IDLE transitions are logged. A record carries only the *new* status,
-  so "idle after success" is derived by tracking each uid's last status.
+  log. A status byte outside 0–4 is a typed error naming its offset, which
+  still returns the records before it. IDLE transitions are logged. A
+  record carries only the *new* status, so "idle after success" is derived
+  by tracking each uid's last status.
+- SKIPPED (4) is part of the format, but BehaviorTree.CPP 4.9.0 never logs
+  it from ticking: a skipped node keeps its IDLE status, and only its
+  parent sees SKIPPED (BT 4.9.0 `src/tree_node.cpp:151-155`).
 - Records are in nearly non-decreasing time order (the writer batches); the
   reader preserves file order and does not sort.
-- A uid with no node in the XML is a diagnostic, not an error.
+- A uid with no node in the XML is a diagnostic, not an error: one per
+  uid, at its first record. An XML that does not parse is a diagnostic
+  too, and then uids are not checked.
 - Absolute time = T0 + offset.
 
 ### 4.2 Writing (F12)
@@ -715,7 +722,14 @@ Transition record, 9 bytes:
   deliberately differs from the reference recorder, which creates the file
   at 0 bytes when recording starts, buffers everything, and writes it when
   recording stops (dossier G-2). The byte content when complete is the
-  same; coppice simply never leaves an empty or partial file behind.
+  same; coppice simply never leaves an empty or partial file behind. An
+  existing file at the destination is replaced whole.
+- **The library's recorder can drop records:** `FileLogger2`'s destructor
+  stops its writer thread without draining the queue (BT 4.9.0
+  `src/loggers/bt_file_logger_v2.cpp:97-99,135-161`), so records queued in
+  the last few milliseconds before it is destroyed may be missing from the
+  file. The test harness waits until every record is written before
+  destroying it.
 
 ## 5. Live-monitor client (F13–F16, L1)
 
@@ -951,11 +965,11 @@ committed.
 | F7 | the F7 row of the table above: V3-mode reference save | byte-exact |
 | F8 | the F8 rows of the table above: reference-mode export to a fresh directory. Until O-18 settles which behavior applies, the project file is compared with its include lines excluded, and the tree files only for the copy-and-flatten rows | byte-exact on what is compared |
 | F9 | the F9 rows of the table above: reference-mode save-as, compared with the reference's output | byte-exact |
-| F11 | `FileLogger2` takes T0 privately at construction (BT 4.9.0 `src/loggers/bt_file_logger_v2.cpp:78,107`), so the harness records each transition's uid, status and **absolute** timestamp through a second, absolute-mode status logger on the same tree. Both loggers are notified with the same time point. The harness then reads T0 from the file. coppice's decode must give the same uid and status, and offsets equal to the harness's absolute time minus T0 | exact |
-| F12 | from scratch: coppice writes from the harness's XML, the T0 read from the `FileLogger2` file, and the harness's transition list (offsets computed as for F11), with no decoded record involved; the output must equal the `FileLogger2` file. Plus write-then-read | byte-exact |
+| F11 | `FileLogger2` takes T0 privately at construction (BT 4.9.0 `src/loggers/bt_file_logger_v2.cpp:78,107`), so the harness records each transition's uid, status and **absolute** time in nanoseconds through a second, absolute-mode status logger on the same tree. Both loggers are notified with the same time point (BT 4.9.0 `src/tree_node.cpp:189`). The logger cuts T0 and each offset to microseconds separately (`T0 = floor(t0_ns/1000)`, offset `= floor((t_ns - t0_ns)/1000)`; lines 20-23, 78-81, 107), so an offset is not always the harness's absolute microseconds minus T0: it can be one less. coppice's decode must give the same XML, T0, uid and status as the file and the harness, and offsets for which one remainder `r` in 0–999 (`t0_ns = 1000·T0 + r`) explains every record | exact uid and status; offsets consistent with one remainder |
+| F12 | from scratch: coppice writes from the harness's XML and the harness's uids and statuses, with T0 and the offsets sliced from the `FileLogger2` file at the §4 offsets by the test itself (the harness cannot know the logger's private T0 to the nanosecond, so cannot compute exact offsets), with no record decoded by coppice's reader; the output must equal the `FileLogger2` file. Plus write-then-read | byte-exact |
 | F13, F15 | session against the BT.CPP harness publisher. The harness ticks only on command and is quiescent while the client samples. Tree XML equals the harness's own `WriteTreeToXML` output; blackboard equals the harness's dump; replies to every v1 tag are checked against §5.3 | exact |
 | F13 (`btview mock`) | connect, FULLTREE, STATUS and BLACKBOARD parse with no error, and the decoded tree matches the mock's served XML | exact on what the mock serves |
-| F14 | the harness drives scripted transitions (RUNNING halted to IDLE, RUNNING to SUCCESS to IDLE, FAILURE to IDLE, SKIPPED to IDLE), and coppice decodes 11, 12, 13 and 14 as idle-after-RUNNING, -SUCCESS, -FAILURE and -SKIPPED, not as plain IDLE. Unit tests on synthetic buffers cover 10 and out-of-range bytes, which no conformant publisher emits | exact |
+| F14 | the harness drives scripted transitions (RUNNING halted to IDLE, RUNNING to SUCCESS to IDLE, FAILURE to IDLE, SKIPPED to IDLE), and coppice decodes 11, 12, 13 and 14 as idle-after-RUNNING, -SUCCESS, -FAILURE and -SKIPPED, not as plain IDLE. Ticking never gives a node the SKIPPED status (BT 4.9.0 `src/tree_node.cpp:151-155`), so the SKIPPED-to-IDLE transition needs a harness node that sets it directly; whether a publisher ever sends 14 otherwise is settled when F14 is built. Unit tests on synthetic buffers cover 10 and out-of-range bytes, which no conformant publisher emits | exact |
 | F16 | live recording from the harness compared with a `FileLogger2` run on the same tree and the same scripted ticks; plus a test that drains exactly 1000 records and expects the possible-gap report | same uid/status sequence; absolute times (T0 + offset) within one tick |
 
 Reference re-baselining against Groot2 v1.10.0 itself happens on the

@@ -33,8 +33,9 @@ departures listed in the spec's §2.3.1), F6, F7 and F9 (the reference
 writer: a tree file written byte for byte as the reference writes it, in
 V4 or V3 mode, refusing what the research record does not cover), and part
 of F10 (dialect suggestion and diagnostics, on a document or a whole
-project). The
-`coppice` binary answers only `--version`.
+project). In `crates/coppice-btlog`: F11 and F12 (reading and writing
+`.btlog` recordings, checked against BehaviorTree.CPP 4.9.0's own logger).
+The `coppice` binary answers only `--version`.
 
 ## Build and test
 
@@ -45,7 +46,12 @@ This repo follows the Exbound `just` convention. See
 just setup   # install the pinned Rust toolchain (rustup >= 1.28)
 just check   # rustfmt check + clippy, warnings as errors (CI equivalent)
 just test    # cargo test across the workspace
+just oracle  # build the BehaviorTree.CPP harness and test .btlog against it
 ```
+
+`just oracle` also needs CMake and a C++17 compiler; it downloads the
+BehaviorTree.CPP 4.9.0 release archive unless `BTCPP_SOURCE_DIR` points at
+an extracted copy.
 
 ## Compatibility and boundaries
 

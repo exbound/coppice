@@ -38,6 +38,7 @@ sources may be read and cited on either side.
 | 2026-11-15 | implementation | the implementation agent session | updated the spec's save sections and copied the fixture set from the public research record at `a1990bb` only; research `39c7acc` later changed one fixture to match coppice's copy, and the provenance now cites that commit |
 | 2026-11-15 to 2026-11-16 | analysis | the operator, with an analysis agent session | answered open questions O-10 to O-16 against the reference and published the findings and fixtures to the research record (merged at `d3ca343`, after the implementation side's review of the published claims against the published bytes) |
 | 2026-11-16 | implementation | the implementation agent session | updated the spec's save sections (§3.2 to §3.6, §7, §8) and copied the second fixture set, plus the first set's newly published `outside.xml`, from the public research record at `d3ca343` only; added open questions O-17 and O-18 |
+| 2026-11-16 | implementation | the implementation agent session | implemented `.btlog` reading and writing (F11, F12) from spec §4 and the BehaviorTree.CPP 4.9.0 source; added a test harness that builds that library from its release archive and runs self-authored trees. Corrected the spec's F11 and F12 oracle rows from what the library's source and the harness showed (separate microsecond truncation of T0 and offsets; records dropped when the logger is destroyed; SKIPPED never logged). No reference-product fact was added |
 
 The operator approved this arrangement, including the exposure note, on
 2026-11-15.

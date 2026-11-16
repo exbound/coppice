@@ -25,3 +25,26 @@ jobs:
 
       - name: Test
         run: just test
+
+  # F11 and F12 against BehaviorTree.CPP 4.9.0's own logger (spec §8):
+  # builds the harness under tests/harness/ and runs the oracle tests.
+  oracle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Setup
+        run: just setup
+
+      - name: Cache the harness build
+        uses: actions/cache@v4
+        with:
+          path: target/harness
+          key: btcpp-4.9.0-${{ runner.os }}-${{ hashFiles('tests/harness/**') }}
+          restore-keys: btcpp-4.9.0-${{ runner.os }}-
+
+      - name: Oracle
+        run: just oracle

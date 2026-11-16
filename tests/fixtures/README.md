@@ -37,3 +37,9 @@ whose provenance cannot be stated does not belong in the suite.
 | `reference/o-answers-2/` (50 files) | the second answers fixture set, for O-10 to O-16, copied from exbound/research at commit `d3ca343` (`fixtures/groot2/o-answers-2/`, CC-BY-4.0); every file matches the research MANIFEST at that commit. Inputs (`in-*`) are self-authored, and `out-*-corrected/` are self-authored corrected copies of the inputs the reference refused to load. The other outputs (`out-*`, and the three `*.evidence.xml` files: two copies of an exported project file and one tree the reference saved in place during an export) are the reference application's own written bytes. The set's MANIFEST and PROTOCOL stay in the research record | F6, F7, F8, F9, F10 |
 | `project/` (4 files) | self-authored, 2026-11-15: a project (`app/main.btproj`) declaring one model and a main tree, including a tree file by a subdirectory path (`app/trees/a.xml`, which itself includes `sub/b.xml` relative to its own directory) and one by a parent-relative path (`shared/common.xml`); `a.xml` uses one port the project's model does not declare | F3, F10 |
 | `doc/pair-space.xml`, `doc/pair-tab.xml` | self-authored, 2026-11-15: identical except one space versus one tab between attributes (byte offset 22, counting from 0) | F5 negative control |
+
+## Generated, not committed
+
+| What | Provenance | Used by |
+|------|------------|---------|
+| `.btlog` oracle (`target/btlog-oracle/`) | written on each `just oracle` run by `tests/harness/btlog_harness`, which ticks self-authored trees under BehaviorTree.CPP 4.9.0 (MIT, release archive pinned by SHA-256 in `tests/harness/CMakeLists.txt`) and logs them with the library's `FileLogger2` | F11, F12 |
