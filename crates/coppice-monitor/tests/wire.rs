@@ -288,9 +288,12 @@ fn recording_payloads() {
         decode_recording_start(b"1794812542674028"),
         Ok(1_794_812_542_674_028)
     );
+    // A clock set before 1970 gives a negative time.
+    assert_eq!(decode_recording_start(b"-123"), Ok(-123));
     for bad in [
         &b""[..],
-        b"-5",
+        b"-",
+        b"--5",
         b"+5",
         b" 5",
         b"5x",
@@ -307,7 +310,7 @@ fn blackboard_names_are_joined_by_semicolons() {
         blackboard_payload(&["Main", "Inner"]).unwrap(),
         b"Main;Inner"
     );
-    assert_eq!(blackboard_payload(&[]).unwrap(), b"");
+    assert_eq!(blackboard_payload(&[]), Err(String::new()));
     assert_eq!(blackboard_payload(&["a;b"]), Err("a;b".to_owned()));
     assert_eq!(blackboard_payload(&["a", ""]), Err(String::new()));
 }

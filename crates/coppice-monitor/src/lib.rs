@@ -1,10 +1,13 @@
 //! The live-monitor wire protocol, as `docs/engineering-spec.md` §5 lays it
 //! out: request and reply headers, the reply checks, and the payloads v1
 //! reads (FULLTREE, STATUS, recording start, transition drain, and the
-//! breakpoint notice). This is the codec only. The sockets (§5.1) arrive
-//! with the transport, and the blackboard payload (F15) with its decoder.
+//! breakpoint notice), and the blackboard request's payload. This is the
+//! codec only. The sockets (§5.1) arrive with the transport, and the
+//! blackboard reply's decoder (F15) with its MessagePack dependency.
 //!
-//! Every multi-byte field is little-endian.
+//! Every multi-byte field is little-endian. The publisher writes them in
+//! its host's byte order, which is little-endian on every platform it is
+//! built for in practice.
 
 use std::fmt;
 
@@ -447,8 +450,13 @@ pub fn recording_payload(start: bool) -> &'static [u8] {
 }
 
 /// The payload of a blackboard request: the names joined by `;`. A name
-/// that is empty or holds a `;` cannot be sent, and is refused.
+/// that is empty or holds a `;` cannot be sent, and is refused, as is an
+/// empty list, which asks for nothing (the publisher answers it with a
+/// MessagePack nil, spec §5.5).
 pub fn blackboard_payload(names: &[&str]) -> Result<Vec<u8>, String> {
+    if names.is_empty() {
+        return Err(String::new());
+    }
     if let Some(bad) = names.iter().find(|n| n.is_empty() || n.contains(';')) {
         return Err((*bad).to_owned());
     }
@@ -456,7 +464,8 @@ pub fn blackboard_payload(names: &[&str]) -> Result<Vec<u8>, String> {
 }
 
 /// A decimal payload that did not parse: a recording start's time, or a
-/// breakpoint notice's uid. Only ASCII digits are accepted.
+/// breakpoint notice's uid. Only ASCII digits are accepted, after an
+/// optional `-` where the type is signed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NumberError {
     /// The payload, lossily decoded.
@@ -476,7 +485,8 @@ fn decimal<T: std::str::FromStr>(payload: &[u8]) -> Result<T, NumberError> {
         found: String::from_utf8_lossy(payload).into_owned(),
     };
     let text = std::str::from_utf8(payload).map_err(|_| bad())?;
-    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Err(bad());
     }
     text.parse().map_err(|_| bad())
