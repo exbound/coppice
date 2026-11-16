@@ -579,8 +579,10 @@ fn a_model_repeated_within_a_later_document_is_reported_once_per_declaration() {
 #[test]
 fn diagnostics_scale_linearly_with_documents_models_and_nodes() {
     // Each file declares a model, uses the previous file's model and
-    // includes the next one. A quadratic pass over documents or models
-    // takes minutes here; a linear one, well under a second.
+    // includes the next one. Rebuilding the model lookup per document
+    // takes minutes here; the shared lookup, well under a second. (Not
+    // every quadratic pass is caught: one over the 20,000 models alone
+    // still finishes inside the bound.)
     const N: usize = 20_000;
     let mut m = Mem::default();
     for i in 0..N {
@@ -603,4 +605,25 @@ fn diagnostics_scale_linearly_with_documents_models_and_nodes() {
     assert_eq!(d, []);
     assert_eq!(p.models().len(), N);
     assert!(took.as_secs() < 20, "diagnostics took {took:?}");
+}
+
+#[test]
+fn tree_lookups_do_not_rebuild_the_registry() {
+    // 20,000 trees, each looked up by name: a lookup that rebuilt the
+    // registry each time would take minutes in a debug build.
+    const N: usize = 20_000;
+    let body: String = (0..N)
+        .map(|i| format!(r#"<BehaviorTree ID="T{i}"><AlwaysSuccess/></BehaviorTree>"#))
+        .collect();
+    let mut m = Mem::with(&[("/p/t.xml", &root(&body))]);
+    let p = load(&mut m, "/p/t.xml");
+    let started = std::time::Instant::now();
+    for i in 0..N {
+        let t = p.tree(&format!("T{i}")).unwrap();
+        assert_eq!(t.id, format!("T{i}"));
+    }
+    assert!(p.tree("absent").is_none());
+    assert_eq!(p.trees().len(), N);
+    let took = started.elapsed();
+    assert!(took.as_secs() < 5, "lookups took {took:?}");
 }

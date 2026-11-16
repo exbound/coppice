@@ -177,8 +177,7 @@ What the library decides, and coppice mirrors (BT 4.9.0
   caller names one (`:710-718`); coppice does not report that, since a
   project file usually holds many trees and the caller usually names one.
 - A `<SubTree ID>` naming no tree in the project fails when the library
-  instantiates it (`:1195-1199`); coppice reports it (`UnknownSubTree`),
-  in every tree, including one that a later registration replaces.
+  instantiates it (`:1195-1199`); coppice reports it (`UnknownSubTree`).
 
 What the library leaves undefined or does differently, and coppice
 decides:
@@ -187,6 +186,9 @@ decides:
   The library takes `absolute(parent_path())` of it (`:294`), which throws
   under libstdc++ for a bare file name (`main.xml`, empty parent) but not
   for `./main.xml`; coppice loads both.
+- **Which trees are checked for `UnknownSubTree`:** every tree, including
+  one that a later registration replaces and one the main tree never
+  reaches. The library fails only on a tree it instantiates.
 - **`<SubTreePlus ID>`** (v3) naming no tree is reported like `<SubTree>`
   (`UnknownSubTree`). The 4.9.0 library registers no `SubTreePlus` node, so
   this follows the v3 dialect (§2.2), not the library.

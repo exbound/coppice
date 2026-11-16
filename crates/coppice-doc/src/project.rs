@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::tree::{
     Diagnostic, DiagnosticKind, NodeModel, NotATreeDocument, TreeDocument, model_lookup,
 };
-use crate::{Document, Element, ParseError};
+use crate::{Document, Element, Node, ParseError};
 
 /// Where a project's files come from.
 ///
@@ -121,6 +121,9 @@ pub struct Project {
     /// Document indices in the order the library registers their trees:
     /// a document after everything it includes.
     registration: Vec<usize>,
+    /// Each registered tree `ID`, resolved once at load: the document and
+    /// the tree's index in its `<root>` element's `children`.
+    trees: BTreeMap<String, (usize, usize)>,
     /// What loading found wrong with includes.
     include_diagnostics: Vec<ProjectDiagnostic>,
 }
@@ -164,6 +167,7 @@ impl Project {
         let mut project = Project {
             documents: Vec::new(),
             registration: Vec::new(),
+            trees: BTreeMap::new(),
             include_diagnostics: Vec::new(),
         };
         // Every file loaded so far, and those on the current chain of
@@ -267,6 +271,17 @@ impl Project {
                 ),
             }
         }
+        for &document in &project.registration {
+            let root = project.documents[document].tree.document().root_element();
+            for (index, node) in root.children.iter().enumerate() {
+                if let Node::Element(e) = node
+                    && e.name == "BehaviorTree"
+                    && let Some(id) = e.attribute("ID")
+                {
+                    project.trees.insert(id.to_owned(), (document, index));
+                }
+            }
+        }
         Ok(project)
     }
 
@@ -321,12 +336,16 @@ impl Project {
     /// A `<BehaviorTree>` without an `ID` is not listed (the library names
     /// it `BehaviorTree_<n>`; coppice does not).
     pub fn trees(&self) -> Vec<ProjectTree<'_>> {
-        self.registry().into_values().collect()
+        self.trees
+            .iter()
+            .filter_map(|(id, &at)| self.resolve(id, at))
+            .collect()
     }
 
     /// The tree `id` resolves to.
     pub fn tree(&self, id: &str) -> Option<ProjectTree<'_>> {
-        self.registry().remove(id)
+        let (id, &at) = self.trees.get_key_value(id)?;
+        self.resolve(id, at)
     }
 
     /// The starting document's `main_tree_to_execute`, if any.
@@ -339,23 +358,20 @@ impl Project {
         })
     }
 
-    fn registry(&self) -> BTreeMap<&str, ProjectTree<'_>> {
-        let mut map = BTreeMap::new();
-        for &document in &self.registration {
-            for element in self.documents[document].tree.behavior_trees() {
-                if let Some(id) = element.attribute("ID") {
-                    map.insert(
-                        id,
-                        ProjectTree {
-                            id,
-                            document,
-                            element,
-                        },
-                    );
-                }
-            }
+    fn resolve<'a>(
+        &'a self,
+        id: &'a str,
+        (document, index): (usize, usize),
+    ) -> Option<ProjectTree<'a>> {
+        let root = self.documents.get(document)?.tree.document().root_element();
+        match root.children.get(index)? {
+            Node::Element(element) => Some(ProjectTree {
+                id,
+                document,
+                element,
+            }),
+            _ => None,
         }
-        map
     }
 
     /// Everything worth reporting across the project, sorted by document
