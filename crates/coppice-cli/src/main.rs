@@ -22,6 +22,7 @@ const USAGE: &str = "usage: coppice --version
        coppice save-as <input> <output> [--reference [--v3] [--target <version>]]
        coppice save <tree-file> --reference [--project <project-file>] [--v3] [--target <version>]
        coppice log dump <file.btlog>
+       coppice log xml <file.btlog>
        coppice log write <tree.xml> <records> <file.btlog>";
 
 /// How a run ended short of success.
@@ -97,7 +98,7 @@ fn run(args: &[&str]) -> Outcome {
     let operands = match args {
         ["check" | "save", file, ..] => vec![*file],
         ["save-as", input, output, ..] => vec![*input, *output],
-        ["log", "dump", file] => vec![*file],
+        ["log", "dump" | "xml", file] => vec![*file],
         ["log", "write", xml, records, output] => vec![*xml, *records, *output],
         _ => Vec::new(),
     };
@@ -116,6 +117,7 @@ fn run(args: &[&str]) -> Outcome {
         ["save-as", input, output, rest @ ..] => save_as(Path::new(input), Path::new(output), rest),
         ["save", file, rest @ ..] => save(Path::new(file), rest),
         ["log", "dump", file] => log_dump(Path::new(file)),
+        ["log", "xml", file] => log_xml(Path::new(file)),
         ["log", "write", xml, records, output] => {
             log_write(Path::new(xml), Path::new(records), Path::new(output))
         }
@@ -626,6 +628,8 @@ fn parse_records(text: &str, xml_len: usize) -> Result<(i64, Vec<Transition>), S
     let mut t0 = None;
     let mut count = None;
     let mut transitions = Vec::new();
+    let mut xml_bytes_seen = false;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     for (n, line) in text.lines().enumerate() {
         let at = |what: String| format!("line {}: {what}", n + 1);
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -649,6 +653,9 @@ fn parse_records(text: &str, xml_len: usize) -> Result<(i64, Vec<Transition>), S
                         )
                         .is_some(),
                     _ => {
+                        if std::mem::replace(&mut xml_bytes_seen, true) {
+                            return Err(at(format!("{key} is given twice")));
+                        }
                         let bytes = value
                             .parse::<usize>()
                             .map_err(|_| at(format!("xml_bytes {value} is not a count")))?;
@@ -663,6 +670,9 @@ fn parse_records(text: &str, xml_len: usize) -> Result<(i64, Vec<Transition>), S
                 if duplicate {
                     return Err(at(format!("{key} is given twice")));
                 }
+            }
+            [key @ ("t0_us" | "records" | "xml_bytes"), ..] => {
+                return Err(at(format!("{key} takes exactly one value")));
             }
             [offset, uid, status] | [offset, _, uid, _, status] => {
                 let offset_us = offset
@@ -724,16 +734,49 @@ fn log_write(xml: &Path, records: &Path, output: &Path) -> Outcome {
     for d in log.diagnostics() {
         let text = match &d.kind {
             LogDiagnosticKind::UnknownUid { uid } => {
-                format!("no node in the XML has uid {uid}")
+                format!("no node has uid {uid}, which a record names")
             }
-            LogDiagnosticKind::XmlUnreadable(e) => {
-                format!("the XML does not parse ({e}); uids are not checked")
-            }
+            LogDiagnosticKind::XmlUnreadable(e) => format!(
+                "byte {}: does not parse ({e}); uids are not checked",
+                e.offset()
+            ),
         };
-        warn(&format!("{}: {text}", output.display()));
+        warn(&format!("{}: {text}", xml.display()));
     }
     let bytes = log
         .to_bytes()
         .map_err(|e| refused(format!("{}: {e}", output.display())))?;
     write_new(output, &bytes)
+}
+
+/// Prints the tree XML a recording embeds, byte for byte: with the
+/// records `log dump` prints, what `log write` needs to write the
+/// recording again.
+fn log_xml(path: &Path) -> Outcome {
+    let bytes = fs::read(path).map_err(|e| refused(format!("{}: {e}", path.display())))?;
+    let (log, error) = match Log::from_bytes(&bytes) {
+        Ok(log) => (log, None),
+        Err(e) => match e.partial() {
+            Some(partial) => (partial.clone(), Some(e)),
+            None => return Err(refused(format!("{}: {e}", path.display()))),
+        },
+    };
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    out.write_all(&log.xml)
+        .and_then(|()| out.flush())
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::BrokenPipe {
+                Failure::Closed
+            } else {
+                refused(format!("cannot write the output: {e}"))
+            }
+        })?;
+    match error {
+        None => Ok(()),
+        Some(e) => Err(refused(format!(
+            "{}: {e}; the XML is whole, the records after it are not",
+            path.display()
+        ))),
+    }
 }

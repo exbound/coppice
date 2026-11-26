@@ -951,17 +951,50 @@ fn log_write(dir: &Path, records: &str) -> (std::process::Output, PathBuf) {
 }
 
 #[test]
-fn log_write_reads_back_what_log_dump_printed() {
-    // The dump of a log, written again, gives the same bytes.
+fn log_write_reads_back_what_log_dump_and_log_xml_printed() {
+    // The dump of a log and its XML, written again, give the same bytes.
     let dir = scratch("cli-log-write");
     let original = btlog(&[(5, 1, 1), (9, 1, 2), (12, 1, 0)], b"");
-    fs::write(dir.join("in.btlog"), &original).unwrap();
-    let dumped = run(&[Path::new("log"), Path::new("dump"), &dir.join("in.btlog")]);
+    let input = dir.join("in.btlog");
+    fs::write(&input, &original).unwrap();
+    let dumped = run(&[Path::new("log"), Path::new("dump"), &input]);
     assert_eq!(dumped.status.code(), Some(0));
-    let (out, file) = log_write(&dir, &String::from_utf8(dumped.stdout).unwrap());
+    let xml = run(&[Path::new("log"), Path::new("xml"), &input]);
+    assert_eq!(xml.status.code(), Some(0), "{}", stderr(&xml));
+    assert_eq!(xml.stdout, LOG_XML);
+    let (records, out_file) = (dir.join("r.txt"), dir.join("out.btlog"));
+    fs::write(dir.join("t.xml"), &xml.stdout).unwrap();
+    fs::write(&records, &dumped.stdout).unwrap();
+    let out = run(&[
+        Path::new("log"),
+        Path::new("write"),
+        &dir.join("t.xml"),
+        &records,
+        &out_file,
+    ]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(out.stdout.is_empty() && out.stderr.is_empty());
-    assert_eq!(fs::read(&file).unwrap(), original);
+    assert_eq!(fs::read(&out_file).unwrap(), original);
+}
+
+#[test]
+fn log_xml_prints_the_xml_of_a_damaged_log_and_fails() {
+    let dir = scratch("cli-log-xml-bad");
+    let file = dir.join("run.btlog");
+    fs::write(&file, btlog(&[(5, 1, 1)], b"\x01\x02")).unwrap();
+    let out = run(&[Path::new("log"), Path::new("xml"), &file]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.stdout, LOG_XML);
+    assert!(
+        stderr(&out).contains("the XML is whole"),
+        "{}",
+        stderr(&out)
+    );
+    // With the XML itself cut short, nothing is printed.
+    fs::write(&file, &btlog(&[], b"")[..40]).unwrap();
+    let out = run(&[Path::new("log"), Path::new("xml"), &file]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
 }
 
 #[test]
@@ -984,7 +1017,7 @@ fn log_write_warns_about_a_uid_the_xml_lacks() {
     let (out, file) = log_write(&dir, "t0_us 1000\n5 7 RUNNING\n");
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(
-        stderr(&out).contains("no node in the XML has uid 7"),
+        stderr(&out).contains("t.xml: no node has uid 7"),
         "{}",
         stderr(&out)
     );
@@ -1014,6 +1047,15 @@ fn log_write_refuses_records_it_cannot_read() {
             "xml_bytes 3\nt0_us 1\n",
             "line 1: xml_bytes is 3, but the XML file has 69 bytes",
         ),
+        (
+            "t0_us 1\nrecords 0\nrecords 0\n",
+            "line 3: records is given twice",
+        ),
+        (
+            "t0_us 1\nxml_bytes 69\nxml_bytes 69\n",
+            "line 3: xml_bytes is given twice",
+        ),
+        ("t0_us 5 6\n", "line 1: t0_us takes exactly one value"),
     ] {
         let dir = scratch("cli-log-write-bad");
         let (out, file) = log_write(&dir, records);
@@ -1043,4 +1085,24 @@ fn log_write_does_not_overwrite() {
         stderr(&out)
     );
     assert_eq!(fs::read(&file).unwrap(), b"keep");
+}
+
+#[test]
+fn log_write_skips_a_byte_order_mark() {
+    let dir = scratch("cli-log-write-bom");
+    let (out, file) = log_write(&dir, "\u{feff}t0_us 1000\n5 1 RUNNING\n");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(fs::read(&file).unwrap(), btlog(&[(5, 1, 1)], b""));
+}
+
+#[test]
+fn log_operands_that_look_like_options_are_usage_errors() {
+    for args in [
+        vec!["log", "xml", "-x.btlog"],
+        vec!["log", "write", "t.xml", "r.txt", "-out.btlog"],
+    ] {
+        let out = coppice(&args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(stderr(&out).contains("./-"), "{args:?}: {}", stderr(&out));
+    }
 }
