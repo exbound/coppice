@@ -5,9 +5,9 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::{
-    Drain, DrainError, LengthError, NumberError, PublisherIdentity, ReplyError, RequestHeader,
-    RequestType, StatusBuffer, blackboard_payload, check_reply, decode_drain,
-    decode_recording_start, decode_status, recording_payload,
+    Drain, DrainError, LengthError, NumberError, ReplyError, RequestHeader, RequestType,
+    StatusBuffer, blackboard_payload, check_reply, decode_drain, decode_recording_start,
+    decode_status, recording_payload,
 };
 
 /// A connection to a publisher's request socket.
@@ -21,7 +21,9 @@ pub struct Client {
     endpoint: String,
     timeout: Duration,
     next_id: u32,
-    identity: PublisherIdentity,
+    /// The publisher's `tree_id` as of the last FULLTREE, or the first
+    /// reply before one.
+    tree_id: Option<[u8; 16]>,
 }
 
 /// Why a request did not give its result.
@@ -33,9 +35,10 @@ pub enum ClientError {
     Timeout(Duration),
     /// The reply failed a check of spec §5.2, or was an error reply.
     Reply(ReplyError),
-    /// The reply carried a `tree_id` other than the one seen before: the
-    /// publisher restarted, and the tree must be fetched again
-    /// ([`Client::full_tree`]) before its statuses mean anything.
+    /// The reply carried a `tree_id` other than the one of the last
+    /// FULLTREE: the publisher restarted. Every request but a FULLTREE
+    /// gets this until the tree is fetched again ([`Client::full_tree`]),
+    /// since until then its statuses mean nothing.
     Restarted,
     /// The payload did not decode.
     Payload(String),
@@ -92,7 +95,9 @@ fn request_socket(
     endpoint: &str,
     timeout: Duration,
 ) -> Result<zmq::Socket, ClientError> {
-    let millis = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+    // Whole milliseconds, rounded up, and at least 1: ZeroMQ reads 0 as
+    // "do not wait".
+    let millis = i32::try_from(timeout.as_micros().div_ceil(1000).max(1)).unwrap_or(i32::MAX);
     let socket = context.socket(zmq::REQ).map_err(socket_error)?;
     socket.set_linger(0).map_err(socket_error)?;
     socket.set_rcvtimeo(millis).map_err(socket_error)?;
@@ -106,6 +111,9 @@ impl Client {
     /// default port is [`crate::DEFAULT_PORT`]). ZeroMQ connects lazily,
     /// so this does not wait for the publisher: the session is up once
     /// [`Client::full_tree`] succeeds (spec §5.4).
+    ///
+    /// `timeout` is rounded up to whole milliseconds, at least 1. Sending
+    /// and receiving each wait up to it, so a request can take twice it.
     pub fn connect(host: &str, port: u16, timeout: Duration) -> Result<Client, ClientError> {
         let endpoint = format!("tcp://{host}:{port}");
         let context = zmq::Context::new();
@@ -116,7 +124,7 @@ impl Client {
             endpoint,
             timeout,
             next_id: 1,
-            identity: PublisherIdentity::default(),
+            tree_id: None,
         })
     }
 
@@ -154,11 +162,11 @@ impl Client {
             }
         };
         let checked = check_reply(&header, &reply)?;
-        if fresh {
-            self.identity = PublisherIdentity::default();
-        }
-        if self.identity.restarted(checked.tree_id) {
-            return Err(ClientError::Restarted);
+        match self.tree_id {
+            Some(known) if known != checked.tree_id && !fresh => {
+                return Err(ClientError::Restarted);
+            }
+            _ => self.tree_id = Some(checked.tree_id),
         }
         Ok(checked.payload.to_vec())
     }
@@ -179,7 +187,9 @@ impl Client {
 
     /// BLACKBOARD (F15): each named subtree's blackboard dump, as one JSON
     /// object keyed by name. `None` when no name matched: the publisher
-    /// then replies with a MessagePack nil (spec §5.5).
+    /// then replies with a MessagePack nil (spec §5.5). JSON has no binary
+    /// type and no NaN: a MessagePack binary value refuses the reply, and
+    /// a NaN or infinite float reads as null.
     pub fn blackboard(&mut self, names: &[&str]) -> Result<Option<serde_json::Value>, ClientError> {
         let payload = blackboard_payload(names).map_err(|bad| {
             payload_error(if bad.is_empty() {
@@ -189,8 +199,17 @@ impl Client {
             })
         })?;
         let frames = self.request(RequestType::Blackboard, Some(&payload), false)?;
+        let bytes = one(frames)?;
+        let mut reader = std::io::Cursor::new(&bytes[..]);
         let value: serde_json::Value =
-            rmp_serde::from_slice(&one(frames)?).map_err(payload_error)?;
+            rmp_serde::decode::from_read(&mut reader).map_err(payload_error)?;
+        let read = usize::try_from(reader.position()).unwrap_or(usize::MAX);
+        if read != bytes.len() {
+            return Err(payload_error(format!(
+                "{} bytes after the MessagePack value",
+                bytes.len() - read
+            )));
+        }
         Ok(match value {
             serde_json::Value::Null => None,
             v => Some(v),

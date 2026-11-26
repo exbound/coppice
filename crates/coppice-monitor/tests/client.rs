@@ -137,12 +137,15 @@ fn a_new_tree_id_reports_a_restart_until_the_tree_is_fetched_again() {
         Step::Reply(A, vec![b"<root/>".to_vec()]),
         Step::Reply(A, vec![vec![]]),
         Step::Reply(B, vec![vec![]]),
+        Step::Reply(B, vec![vec![]]),
         Step::Reply(B, vec![b"<root/>".to_vec()]),
         Step::Reply(B, vec![vec![]]),
     ]);
     let mut c = client(port);
     c.full_tree().unwrap();
     c.status().unwrap();
+    // Every status from the new publisher is refused, not just the first.
+    assert!(matches!(c.status(), Err(ClientError::Restarted)));
     assert!(matches!(c.status(), Err(ClientError::Restarted)));
     c.full_tree().unwrap();
     c.status().unwrap();
@@ -238,4 +241,81 @@ fn fetching_the_tree_accepts_a_restart_it_is_the_first_to_see() {
     c.full_tree().unwrap();
     c.full_tree().unwrap();
     c.status().unwrap();
+}
+
+#[test]
+fn a_restart_seen_first_by_a_blackboard_or_drain_request_is_reported() {
+    let (port, _) = publisher(vec![
+        Step::Reply(A, vec![b"<root/>".to_vec()]),
+        Step::Reply(B, vec![rmp_serde::to_vec(&()).unwrap()]),
+        Step::Reply(B, vec![vec![]]),
+    ]);
+    let mut c = client(port);
+    c.full_tree().unwrap();
+    assert!(matches!(c.blackboard(&["M"]), Err(ClientError::Restarted)));
+    assert!(matches!(c.drain(), Err(ClientError::Restarted)));
+}
+
+#[test]
+fn a_blackboard_reply_with_bytes_after_its_value_is_refused() {
+    let (port, _) = publisher(vec![Step::Reply(A, vec![vec![0xc0, 0xff, 0xff]])]);
+    match client(port).blackboard(&["M"]) {
+        Err(ClientError::Payload(e)) => assert!(e.contains("2 bytes after"), "{e}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_blackboard_reply_with_binary_is_refused_and_nan_reads_as_null() {
+    // {"a": bin8 [1, 2]}, then {"a": NaN, "b": +inf} as float64.
+    let binary = vec![0x81, 0xa1, b'a', 0xc4, 0x02, 1, 2];
+    let mut floats = vec![0x82, 0xa1, b'a', 0xcb];
+    floats.extend_from_slice(&f64::NAN.to_be_bytes());
+    floats.extend_from_slice(&[0xa1, b'b', 0xcb]);
+    floats.extend_from_slice(&f64::INFINITY.to_be_bytes());
+    let (port, _) = publisher(vec![
+        Step::Reply(A, vec![binary]),
+        Step::Reply(A, vec![floats]),
+    ]);
+    let mut c = client(port);
+    assert!(matches!(c.blackboard(&["M"]), Err(ClientError::Payload(_))));
+    assert_eq!(
+        c.blackboard(&["M"]).unwrap(),
+        Some(serde_json::json!({"a": null, "b": null}))
+    );
+}
+
+#[test]
+fn a_timeout_under_a_millisecond_still_waits() {
+    // One reply per try: a try that times out on a slow host leaves its
+    // reply to the socket the client replaced.
+    let (port, _) = publisher(
+        (0..50)
+            .map(|_| Step::Reply(A, vec![b"<root/>".to_vec()]))
+            .collect(),
+    );
+    let mut c = Client::connect("127.0.0.1", port, Duration::from_micros(900)).unwrap();
+    // Rounded up to 1 ms, not 0 ("do not wait").
+    let got = (0..50).find_map(|_| c.full_tree().ok());
+    assert_eq!(got.as_deref(), Some(&b"<root/>"[..]));
+}
+
+#[test]
+fn dropping_a_client_with_an_unanswered_request_does_not_hang() {
+    // Nothing listens on the port, so the request stays queued; with a
+    // lingering socket, dropping the client would wait for it forever.
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let (done, finished) = mpsc::channel();
+    thread::spawn(move || {
+        let mut c = client(port);
+        let _ = c.full_tree();
+        drop(c);
+        let _ = done.send(());
+    });
+    finished
+        .recv_timeout(Duration::from_secs(10))
+        .expect("dropping the client hung");
 }

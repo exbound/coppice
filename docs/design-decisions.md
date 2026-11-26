@@ -80,10 +80,14 @@ dependency bundles and links it statically; it cannot link a system
 libzmq. So the build needs a C++ compiler and no system package, and the
 libzmq version is pinned by `Cargo.lock`. libzmq 4.3.4 is licensed under
 the LGPL-3.0 with libzmq's static-linking exception (`COPYING.LESSER` in
-`zeromq-src`'s `vendor/`), which allows distributing an executable that
-links it unmodified under any terms, so coppice stays Apache-2.0. libzmq
-moved to MPL-2.0 from 4.3.5; that version is reachable only through the
-older `zmq` 0.9, which links a system library.
+`zeromq-src`'s `vendor/`, lines 169–181), which allows distributing the
+linked executable under terms of one's choice (a modified libzmq must
+extend the exception), so coppice stays Apache-2.0. The libzmq build also
+compiles a bundled SHA-1 (`vendor/external/sha1`, BSD-3-Clause, whose
+notice a binary distribution reproduces) and, on Windows only, wepoll
+(`vendor/external/wepoll`, BSD-2-Clause). The 4.3.4 tree records libzmq's
+contributors' permissions to relicense under MPL-2.0 (`vendor/RELICENSE/`);
+a later libzmq under MPL-2.0 would need a binding that links it.
 
 The client is blocking on its own thread: REQ polling plus a SUB poll, with
 results sent over a channel. No async runtime in v1.
@@ -137,9 +141,11 @@ compatible with Apache-2.0 distribution, crates.io as the only source, and
 no wildcard versions. It joined the gate with the first third-party
 dependencies (D4's `zmq`, and `rmp-serde` and `serde_json` for the
 blackboard, F15). `zeromq-src` declares only the license of its own build
-code, so `deny.toml` clarifies it to include libzmq's terms (D4), tied to
-the hash of the license file, and allows those terms by name: a new
-libzmq license text fails the gate until it is read. Advisories are not in
+code, so `deny.toml` clarifies it to include the licenses of the C it
+compiles (D4), each tied to the hash of its license file, and allows those
+terms by name. A clarification whose hash stops matching no longer
+applies, and the gate fails on the allowance it leaves unused, so a new
+license text fails the gate until it is read. Advisories are not in
 the gate, since they need a network fetch at check time. Every dependency is
 pinned by `Cargo.lock`, which is committed, and every cargo build in the gate
 (`clippy`, `test`) runs with `--locked`.
