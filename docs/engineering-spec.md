@@ -678,15 +678,17 @@ to declare its `ID` (a `DuplicateModel` there, §2.3.1) is ignored, so it
 blocks no save: the block is written from the declaration that wins. This
 lets a save refresh a tree file whose copy of a project model has gone
 stale since it was last saved (§3.2). The save notes the saved file's own
-differing copy, which it replaces; a save that succeeds reports, as
+differing declaration, which it replaces or, when the tree does not use
+the model, drops; a save that succeeds reports, as
 warnings, those in the project's other files; and `check` still reports
 them all. Two cases still refuse:
 
 - either declaration is a `SubTree` model, which the library reads from
   the XML itself (§2.3.1), so ignoring one is not coppice's to decide;
 - the saved file holds the declaration that wins, its tree does not use
-  the model, and a differing declaration in another file would win once
-  the save drops it, changing the model the rest of the project uses.
+  the model, and the next declaration in load order, which would win once
+  the save drops it, is not the writer's copy of it: the save would change
+  the model the rest of the project uses.
 
 A repeat within the saved document is refused by the writer, as any
 diagnostic in its input is. The first declaration in load order is the

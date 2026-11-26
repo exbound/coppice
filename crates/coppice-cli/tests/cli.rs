@@ -838,7 +838,7 @@ fn a_save_refreshes_a_stale_copy_of_a_changed_project_model() {
         stderr(&out)
     );
     assert!(
-        stderr(&out).contains("copy of model UsedModel differs"),
+        stderr(&out).contains("declaration of model UsedModel is not the writer's copy"),
         "{}",
         stderr(&out)
     );
@@ -890,7 +890,7 @@ fn stale_copies_in_two_tree_files_are_refreshed_one_save_at_a_time() {
     assert!(
         lines
             .iter()
-            .any(|l| l.contains("tree.xml:") && l.contains("differs")),
+            .any(|l| l.contains("tree.xml:") && l.contains("writes that one instead")),
         "{err}"
     );
     let out = save_in(&project, &other);
@@ -898,7 +898,7 @@ fn stale_copies_in_two_tree_files_are_refreshed_one_save_at_a_time() {
     let err = stderr(&out);
     assert!(!err.contains("already declared"), "{err}");
     assert!(
-        err.contains("other.xml:") && err.contains("differs"),
+        err.contains("other.xml:") && err.contains("writes that one instead"),
         "{err}"
     );
     for file in [&tree, &other] {

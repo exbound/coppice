@@ -429,8 +429,8 @@ impl Project {
     /// replaces, is named in [`Written::notes`]. Two exceptions refuse:
     /// either declaration is a `SubTree` model, which the library itself
     /// reads; or this file holds the declaration that wins, its tree does
-    /// not use the model, and a differing declaration elsewhere would win
-    /// once the save drops it. A repeat within this document is refused
+    /// not use the model, and the next declaration in load order, which
+    /// would win once the save drops it, is not the writer's copy of it. A repeat within this document is refused
     /// by the writer, as before (spec §3.7).
     ///
     /// A refusal about a declared model points into the document that
@@ -505,38 +505,52 @@ impl Project {
             out.sort_by_key(|p| (p.document, p.diagnostic.offset));
             out
         })?;
-        // A declaration this save drops, which would hand the ID to a
-        // differing declaration in another document.
+        // A winning declaration this save drops, whose ID the next
+        // declaration in load order would then take over, differently.
         let mut handed_over: Vec<ProjectDiagnostic> = Vec::new();
-        for r in &redeclared {
-            if r.winner_document == document && !written.models.contains(&r.winner.id) {
+        // A repeat of an ID within this document never gets here: the
+        // writer has refused it.
+        for m in d.tree.models() {
+            if origin.get(&m.id) != Some(&document) || written.models.contains(&m.id) {
+                continue;
+            }
+            if let Some((next, n)) = self.next_declaration(&m.id, document)
+                && !written_copy(&m, &n)
+            {
                 handed_over.push(ProjectDiagnostic {
                     document,
                     diagnostic: Diagnostic {
                         kind: DiagnosticKind::DuplicateModel,
-                        offset: r.winner.offset,
+                        offset: m.offset,
                         message: format!(
-                            "this save drops model {}, which the tree does not use; the different declaration in {} would then be used",
-                            r.winner.id,
-                            self.documents[r.loser_document].path.display()
+                            "this save drops model {}, which the tree does not use; the declaration in {}, which is not the writer's copy of this one, would then be used",
+                            m.id,
+                            self.documents[next].path.display()
                         ),
                     },
-                });
-            } else if r.loser_document == document {
-                written.notes.push(Diagnostic {
-                    kind: DiagnosticKind::DuplicateModel,
-                    offset: r.loser.offset,
-                    message: format!(
-                        "this file's copy of model {} differs from the one in {}, which the save writes instead",
-                        r.loser.id,
-                        self.documents[r.winner_document].path.display()
-                    ),
                 });
             }
         }
         if !handed_over.is_empty() {
-            handed_over.dedup_by_key(|p| p.diagnostic.offset);
             return Err(handed_over);
+        }
+        // This file's own differing declarations, which the save replaces
+        // or drops.
+        for r in redeclared.iter().filter(|r| r.loser_document == document) {
+            let what = if written.models.contains(&r.loser.id) {
+                "the save writes that one instead"
+            } else {
+                "the save drops it, as the tree does not use the model"
+            };
+            written.notes.push(Diagnostic {
+                kind: DiagnosticKind::DuplicateModel,
+                offset: r.loser.offset,
+                message: format!(
+                    "this file's declaration of model {} is not the writer's copy of the one in {}; {what}",
+                    r.loser.id,
+                    self.documents[r.winner_document].path.display()
+                ),
+            });
         }
         let unresolved: Vec<ProjectDiagnostic> = all
             .into_iter()
@@ -605,6 +619,22 @@ impl Project {
             }
         }
         out
+    }
+
+    /// The first declaration of `id` in a document loaded after
+    /// `document`, with that document's index.
+    fn next_declaration(&self, id: &str, document: usize) -> Option<(usize, NodeModel)> {
+        self.documents
+            .iter()
+            .enumerate()
+            .skip(document + 1)
+            .find_map(|(i, d)| {
+                d.tree
+                    .models()
+                    .into_iter()
+                    .find(|m| m.id == id)
+                    .map(|m| (i, m))
+            })
     }
 
     /// Everything worth reporting across the project, sorted by document
