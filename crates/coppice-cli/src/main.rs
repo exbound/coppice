@@ -302,8 +302,8 @@ fn save(file: &Path, rest: &[&str]) -> Outcome {
     match project.write_reference(index, &o.writer()) {
         Ok(written) => {
             // A declaration that loses to an earlier one does not block the
-            // save, but the user may have meant it to win: say which, except
-            // in the saved file, whose model block this save replaces.
+            // save, but the user may have meant it to win: say which. The
+            // saved file's own is in the notes, as the save replaces it.
             for pd in project.diagnostics() {
                 if pd.diagnostic.kind == DiagnosticKind::DuplicateModel && pd.document != index {
                     let d = &documents[pd.document];

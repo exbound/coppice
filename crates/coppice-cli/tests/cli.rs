@@ -829,8 +829,19 @@ fn a_save_refreshes_a_stale_copy_of_a_changed_project_model() {
     assert!(stderr(&out).contains("DuplicateModel"), "{}", stderr(&out));
     let out = save_in(&project, &tree);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    // The saved file's own stale copy is what the save replaces: no warning.
-    assert!(!stderr(&out).contains("DuplicateModel"), "{}", stderr(&out));
+    // The saved file's own stale copy is what the save replaces: a note
+    // says so, and nothing else is reported.
+    assert_eq!(
+        stderr(&out).lines().collect::<Vec<_>>().len(),
+        1,
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("copy of model UsedModel differs"),
+        "{}",
+        stderr(&out)
+    );
     let saved = fs::read_to_string(&tree).unwrap();
     assert!(saved.contains("<input_port name=\"q\"/>"), "{saved}");
     let out = run(&[Path::new("check"), &project]);
@@ -863,14 +874,33 @@ fn stale_copies_in_two_tree_files_are_refreshed_one_save_at_a_time() {
         assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     }
     add_port_q(&project);
-    // The first save warns about the other file's copy, still stale.
+    // The first save warns about the other file's copy, still stale, and
+    // notes the one it replaces.
     let out = save_in(&project, &tree);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert!(stderr(&out).contains("other.xml"), "{}", stderr(&out));
-    assert!(!stderr(&out).contains("tree.xml:"), "{}", stderr(&out));
+    let err = stderr(&out);
+    let lines: Vec<&str> = err.lines().collect();
+    assert_eq!(lines.len(), 2, "{err}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("other.xml:") && l.contains("already declared")),
+        "{err}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("tree.xml:") && l.contains("differs")),
+        "{err}"
+    );
     let out = save_in(&project, &other);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert!(!stderr(&out).contains("DuplicateModel"), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(!err.contains("already declared"), "{err}");
+    assert!(
+        err.contains("other.xml:") && err.contains("differs"),
+        "{err}"
+    );
     for file in [&tree, &other] {
         let saved = fs::read_to_string(file).unwrap();
         assert!(saved.contains("<input_port name=\"q\"/>"), "{saved}");

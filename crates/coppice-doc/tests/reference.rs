@@ -1306,3 +1306,117 @@ fn a_file_with_no_tree_is_refused() {
         [(DiagnosticKind::NotInRecord, 0)]
     );
 }
+
+#[test]
+fn a_save_that_would_hand_a_model_to_a_differing_declaration_is_refused() {
+    // t.xml declares N first and does not use it; o.xml declares N
+    // differently and uses it. Saving t.xml would drop N, and o.xml's
+    // declaration would win.
+    let proj = v4(r#"<include path="t.xml"/><include path="o.xml"/>"#);
+    let t = v4(concat!(
+        r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="N"><input_port name="a"/></Action></TreeNodesModel>"#,
+    ));
+    let o = v4(concat!(
+        r#"<BehaviorTree ID="O"><N a="1"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="N"><output_port name="b"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/o.xml", &o),
+    ]);
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [(
+            1,
+            DiagnosticKind::DuplicateModel,
+            at(&t, r#"<Action ID="N""#)
+        )]
+    );
+    // A later declaration that is the writer's copy takes over unchanged.
+    let o = v4(concat!(
+        r#"<BehaviorTree ID="O"><N a="1"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="N"><input_port name="a"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/o.xml", &o),
+    ]);
+    assert!(p.write_reference(1, &ReferenceOptions::default()).is_ok());
+}
+
+#[test]
+fn a_repeat_within_the_saved_document_is_still_refused() {
+    let proj = v4(r#"<include path="t.xml"/><include path="o.xml"/>"#);
+    let repeat = |tree: &str| {
+        v4(&format!(
+            r#"<BehaviorTree ID="{tree}"><AlwaysSuccess/></BehaviorTree><TreeNodesModel><Action ID="N"/><Action ID="N"/></TreeNodesModel>"#
+        ))
+    };
+    let (t, o) = (repeat("T"), repeat("O"));
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/o.xml", &o),
+    ]);
+    let second = t.rfind(r#"<Action ID="N""#).unwrap();
+    // t.xml's own repeat refuses its save; o.xml's repeats (within the
+    // file, and of t.xml's N) do not.
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [(1, DiagnosticKind::DuplicateModel, second)]
+    );
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &tree_of("<AlwaysSuccess/>")),
+        ("/p/o.xml", &o),
+    ]);
+    assert!(p.write_reference(1, &ReferenceOptions::default()).is_ok());
+}
+
+#[test]
+fn a_differing_subtree_model_declared_again_still_refuses() {
+    let proj = v4(concat!(
+        r#"<include path="t.xml"/><include path="o.xml"/>"#,
+        r#"<TreeNodesModel><Action ID="Sub"/></TreeNodesModel>"#,
+    ));
+    let t = tree_of("<AlwaysSuccess/>");
+    let o = v4(
+        r#"<TreeNodesModel><SubTree ID="Sub"><input_port name="k"/></SubTree></TreeNodesModel>"#,
+    );
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/o.xml", &o),
+    ]);
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [(2, DiagnosticKind::DuplicateModel, at(&o, "<SubTree"))]
+    );
+}
+
+#[test]
+fn a_save_notes_the_differing_copy_it_replaces() {
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="A"><input_port name="x"/></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><A x="1"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="A"><input_port name="x"/><output_port name="r"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[("/p/proj.btproj", &proj), ("/p/b.xml", &b)]);
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert!(!written.text.contains(r#"name="r""#), "{}", written.text);
+    assert_eq!(
+        written
+            .notes
+            .iter()
+            .map(|n| (n.kind, n.offset))
+            .collect::<Vec<_>>(),
+        [(DiagnosticKind::DuplicateModel, at(&b, r#"<Action ID="A""#))]
+    );
+}
