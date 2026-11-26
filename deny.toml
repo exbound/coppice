@@ -1,0 +1,39 @@
+# Dependency policy (docs/design-decisions.md D9): licences compatible with
+# Apache-2.0 distribution, crates.io as the only source.
+
+[graph]
+all-features = true
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "Unlicense",
+    # libzmq 4.3.4 as bundled and statically linked by zeromq-src: the
+    # LGPL-3.0 with libzmq's static-linking exception (its
+    # vendor/COPYING.LESSER), which allows distributing the linked
+    # executable under any terms while libzmq itself stays unmodified.
+    "LicenseRef-libzmq-LGPL-3.0-static-exception",
+]
+confidence-threshold = 0.93
+# A clarification whose hash no longer matches stops applying, leaving its
+# licence unused: fail then, rather than fall back to the declared one.
+unused-allowed-license = "deny"
+
+# zeromq-src declares only its own build code's licence; the libzmq
+# source it compiles carries the terms above.
+[[licenses.clarify]]
+crate = "zeromq-src"
+expression = "(MIT OR Apache-2.0) AND LicenseRef-libzmq-LGPL-3.0-static-exception"
+license-files = [{ path = "vendor/COPYING.LESSER", hash = 0x61492e3d }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

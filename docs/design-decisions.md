@@ -75,6 +75,16 @@ sides removes a class of interop doubt. Cost: a C library to build or link,
 and a non-idiomatic API, wrapped once inside `coppice-monitor`. libzmq's
 license is checked with the rest of the dependency tree (D9).
 
+`zmq` 0.10 builds the libzmq **4.3.4** source that its `zeromq-src`
+dependency bundles and links it statically; it cannot link a system
+libzmq. So the build needs a C++ compiler and no system package, and the
+libzmq version is pinned by `Cargo.lock`. libzmq 4.3.4 is licensed under
+the LGPL-3.0 with libzmq's static-linking exception (`COPYING.LESSER` in
+`zeromq-src`'s `vendor/`), which allows distributing an executable that
+links it unmodified under any terms, so coppice stays Apache-2.0. libzmq
+moved to MPL-2.0 from 4.3.5; that version is reachable only through the
+older `zmq` 0.9, which links a system library.
+
 The client is blocking on its own thread: REQ polling plus a SUB poll, with
 results sent over a channel. No async runtime in v1.
 
@@ -122,9 +132,15 @@ more than a message.
 
 ## D9. Dependency hygiene — Decided
 
-`cargo-deny` in `just check`, with an allow-list of licenses compatible with
-Apache-2.0 distribution. It joins the gate with the first third-party
-dependency; until then there is nothing for it to check. Every dependency is
+`cargo-deny` in `just check` (`deny.toml`), with an allow-list of licenses
+compatible with Apache-2.0 distribution, crates.io as the only source, and
+no wildcard versions. It joined the gate with the first third-party
+dependencies (D4's `zmq`, and `rmp-serde` and `serde_json` for the
+blackboard, F15). `zeromq-src` declares only the license of its own build
+code, so `deny.toml` clarifies it to include libzmq's terms (D4), tied to
+the hash of the license file, and allows those terms by name: a new
+libzmq license text fails the gate until it is read. Advisories are not in
+the gate, since they need a network fetch at check time. Every dependency is
 pinned by `Cargo.lock`, which is committed, and every cargo build in the gate
 (`clippy`, `test`) runs with `--locked`.
 

@@ -21,9 +21,13 @@ lint: lints-opted-in
 lints-opted-in:
     @for f in crates/*/Cargo.toml; do awk '/^\[lints\]/{s=1;next} /^\[/{s=0} s && /^workspace *= *true/{ok=1} END{exit !ok}' "$f" || { echo "$f: missing '[lints] workspace = true'" >&2; exit 1; }; done
 
-# Format-check + lint + typecheck — the CI equivalent
-check: && lint
+# Format-check + lint + typecheck + dependency policy — the CI equivalent
+check: && lint deny
     cargo fmt --all --check
+
+# Licences, bans and sources of every dependency, as deny.toml sets them (D9)
+deny:
+    cargo deny --locked check licenses bans sources
 
 # Run the test suite
 test:
