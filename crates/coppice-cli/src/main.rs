@@ -775,7 +775,7 @@ fn log_xml(path: &Path) -> Outcome {
     match error {
         None => Ok(()),
         Some(e) => Err(refused(format!(
-            "{}: {e}; the XML is whole, the records after it are not",
+            "{}: {e}; the XML above is whole, the records are not",
             path.display()
         ))),
     }

@@ -986,7 +986,7 @@ fn log_xml_prints_the_xml_of_a_damaged_log_and_fails() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(out.stdout, LOG_XML);
     assert!(
-        stderr(&out).contains("the XML is whole"),
+        stderr(&out).contains("the XML above is whole"),
         "{}",
         stderr(&out)
     );
@@ -1100,9 +1100,26 @@ fn log_operands_that_look_like_options_are_usage_errors() {
     for args in [
         vec!["log", "xml", "-x.btlog"],
         vec!["log", "write", "t.xml", "r.txt", "-out.btlog"],
+        vec!["log", "write", "-t.xml", "r.txt", "out.btlog"],
     ] {
         let out = coppice(&args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert!(stderr(&out).contains("./-"), "{args:?}: {}", stderr(&out));
     }
+}
+
+#[test]
+fn log_write_warns_where_the_xml_does_not_parse() {
+    let dir = scratch("cli-log-write-xml");
+    let (xml, text, out) = (dir.join("t.xml"), dir.join("r.txt"), dir.join("out.btlog"));
+    fs::write(&xml, "<root>\n<a>\n</b>\n</root>").unwrap();
+    fs::write(&text, "t0_us 1\n").unwrap();
+    let result = run(&[Path::new("log"), Path::new("write"), &xml, &text, &out]);
+    assert_eq!(result.status.code(), Some(0), "{}", stderr(&result));
+    // </b> starts at byte 11 of the XML file.
+    assert!(
+        stderr(&result).contains("t.xml: byte 11: does not parse"),
+        "{}",
+        stderr(&result)
+    );
 }
