@@ -167,6 +167,15 @@ In place now:
 - `log dump <file.btlog>` prints the header and one tab-separated line per
   record, with its absolute time and the node's previous status (F11). On
   a damaged file it prints what was read before the damage.
+- `log write <tree.xml> <records> <file.btlog>` writes a recording (F12)
+  from a tree's XML, embedded byte for byte, and records in the form
+  `log dump` prints, so the dump of a log writes back to the same bytes.
+  The records file needs a `t0_us` line; a record is
+  `offset_us uid status`, or the five columns `log dump` prints, whose
+  `absolute_us` and `previous` are not read. Blank lines and lines
+  starting with `#` are skipped. `records` and `xml_bytes` lines are
+  optional, and checked when given. A uid the XML lacks is a warning,
+  as in `log dump`. Like `save-as`, it never overwrites a file.
 - Every file the CLI writes appears complete or not at all.
 - Exit codes: 0 done, 1 the input has a problem or was refused, 2 the
   command line is wrong (an unknown or repeated option, a missing, empty
@@ -175,6 +184,6 @@ In place now:
   as `./-name`. Output cut short by its
   reader, as by `| head`, ends the run quietly with 0.
 
-Not yet: `log write` (no input form is specified), `monitor` and `record`
+Not yet: `monitor` and `record`
 (with F13 to F16), a reference project export (F8, waiting on O-18), and
 `--json`.

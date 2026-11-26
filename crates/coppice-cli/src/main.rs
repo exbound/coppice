@@ -9,7 +9,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use coppice_btlog::{DiagnosticKind as LogDiagnosticKind, Log, Status, XML_OFFSET};
+use coppice_btlog::{
+    DiagnosticKind as LogDiagnosticKind, Log, OFFSET_MASK, Status, Transition, XML_OFFSET,
+};
 use coppice_doc::{
     Diagnostic, DiagnosticKind, Document, LoadError, Project, ReferenceOptions, TreeDocument,
     WriteMode, write_tree,
@@ -19,7 +21,8 @@ const USAGE: &str = "usage: coppice --version
        coppice check <file>
        coppice save-as <input> <output> [--reference [--v3] [--target <version>]]
        coppice save <tree-file> --reference [--project <project-file>] [--v3] [--target <version>]
-       coppice log dump <file.btlog>";
+       coppice log dump <file.btlog>
+       coppice log write <tree.xml> <records> <file.btlog>";
 
 /// How a run ended short of success.
 enum Failure {
@@ -95,6 +98,7 @@ fn run(args: &[&str]) -> Outcome {
         ["check" | "save", file, ..] => vec![*file],
         ["save-as", input, output, ..] => vec![*input, *output],
         ["log", "dump", file] => vec![*file],
+        ["log", "write", xml, records, output] => vec![*xml, *records, *output],
         _ => Vec::new(),
     };
     if let Some(bad) = operands.iter().find(|a| a.starts_with('-')) {
@@ -112,6 +116,9 @@ fn run(args: &[&str]) -> Outcome {
         ["save-as", input, output, rest @ ..] => save_as(Path::new(input), Path::new(output), rest),
         ["save", file, rest @ ..] => save(Path::new(file), rest),
         ["log", "dump", file] => log_dump(Path::new(file)),
+        ["log", "write", xml, records, output] => {
+            log_write(Path::new(xml), Path::new(records), Path::new(output))
+        }
         _ => Err(usage("")),
     }
 }
@@ -595,4 +602,138 @@ fn log_dump(path: &Path) -> Outcome {
             path.display()
         ))),
     }
+}
+
+/// The status a record's name stands for, as `log dump` prints it.
+fn status_from_name(name: &str) -> Option<Status> {
+    [
+        Status::Idle,
+        Status::Running,
+        Status::Success,
+        Status::Failure,
+        Status::Skipped,
+    ]
+    .into_iter()
+    .find(|s| status_name(*s) == name)
+}
+
+/// Reads records in the form `log dump` prints: `t0_us`, then one record
+/// per line. Blank lines and lines starting with `#` are skipped. A record
+/// is `offset_us uid status`, or the five columns `log dump` prints, whose
+/// `absolute_us` and `previous` are ignored. `records`, if given, must
+/// count the records; `xml_bytes`, if given, must be `xml_len`.
+fn parse_records(text: &str, xml_len: usize) -> Result<(i64, Vec<Transition>), String> {
+    let mut t0 = None;
+    let mut count = None;
+    let mut transitions = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let at = |what: String| format!("line {}: {what}", n + 1);
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        match fields.as_slice() {
+            [] => {}
+            [first, ..] if first.starts_with('#') => {}
+            [key @ ("t0_us" | "records" | "xml_bytes"), value] => {
+                let duplicate = match *key {
+                    "t0_us" => t0
+                        .replace(
+                            value
+                                .parse::<i64>()
+                                .map_err(|_| at(format!("t0_us {value} is not a whole number")))?,
+                        )
+                        .is_some(),
+                    "records" => count
+                        .replace(
+                            value
+                                .parse::<usize>()
+                                .map_err(|_| at(format!("records {value} is not a count")))?,
+                        )
+                        .is_some(),
+                    _ => {
+                        let bytes = value
+                            .parse::<usize>()
+                            .map_err(|_| at(format!("xml_bytes {value} is not a count")))?;
+                        if bytes != xml_len {
+                            return Err(at(format!(
+                                "xml_bytes is {bytes}, but the XML file has {xml_len} bytes"
+                            )));
+                        }
+                        false
+                    }
+                };
+                if duplicate {
+                    return Err(at(format!("{key} is given twice")));
+                }
+            }
+            [offset, uid, status] | [offset, _, uid, _, status] => {
+                let offset_us = offset
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|o| *o <= OFFSET_MASK)
+                    .ok_or_else(|| {
+                        at(format!(
+                            "offset {offset} is not a whole number from 0 to {OFFSET_MASK}"
+                        ))
+                    })?;
+                let uid = uid
+                    .parse::<u16>()
+                    .map_err(|_| at(format!("uid {uid} is not a whole number from 0 to 65535")))?;
+                let status = status_from_name(status).ok_or_else(|| {
+                    at(format!(
+                        "{status} is not a status (IDLE, RUNNING, SUCCESS, FAILURE or SKIPPED)"
+                    ))
+                })?;
+                transitions.push(Transition {
+                    offset_us,
+                    uid,
+                    status,
+                });
+            }
+            _ => {
+                return Err(at(
+                    "expected t0_us, records, xml_bytes or a record of 3 or 5 columns".to_owned(),
+                ));
+            }
+        }
+    }
+    let t0 = t0.ok_or("no t0_us line")?;
+    if let Some(count) = count
+        && count != transitions.len()
+    {
+        return Err(format!(
+            "records says {count}, but {} records follow",
+            transitions.len()
+        ));
+    }
+    Ok((t0, transitions))
+}
+
+/// F12: write a recording from a tree's XML and records in the form
+/// `log dump` prints, to a file that does not exist yet.
+fn log_write(xml: &Path, records: &Path, output: &Path) -> Outcome {
+    let xml_bytes = fs::read(xml).map_err(|e| refused(format!("{}: {e}", xml.display())))?;
+    let text = fs::read(records).map_err(|e| refused(format!("{}: {e}", records.display())))?;
+    let text = String::from_utf8(text)
+        .map_err(|_| refused(format!("{}: not UTF-8 text", records.display())))?;
+    let (t0_us, transitions) = parse_records(&text, xml_bytes.len())
+        .map_err(|e| refused(format!("{}: {e}", records.display())))?;
+    let log = Log {
+        xml: xml_bytes,
+        t0_us,
+        transitions,
+    };
+    for d in log.diagnostics() {
+        let text = match &d.kind {
+            LogDiagnosticKind::UnknownUid { uid } => {
+                format!("no node in the XML has uid {uid}")
+            }
+            LogDiagnosticKind::XmlUnreadable(e) => {
+                format!("the XML does not parse ({e}); uids are not checked")
+            }
+        };
+        warn(&format!("{}: {text}", output.display()));
+    }
+    let bytes = log
+        .to_bytes()
+        .map_err(|e| refused(format!("{}: {e}", output.display())))?;
+    write_new(output, &bytes)
 }

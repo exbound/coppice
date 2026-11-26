@@ -939,3 +939,108 @@ fn a_tree_file_loaded_before_the_models_keeps_its_copy_and_says_so() {
     let saved = fs::read_to_string(&tree).unwrap();
     assert!(!saved.contains("name=\"q\""), "{saved}");
 }
+
+const LOG_XML: &[u8] = b"<root><BehaviorTree ID=\"M\"><Sequence _uid=\"1\"/></BehaviorTree></root>";
+
+fn log_write(dir: &Path, records: &str) -> (std::process::Output, PathBuf) {
+    let (xml, text, out) = (dir.join("t.xml"), dir.join("r.txt"), dir.join("out.btlog"));
+    fs::write(&xml, LOG_XML).unwrap();
+    fs::write(&text, records).unwrap();
+    let result = run(&[Path::new("log"), Path::new("write"), &xml, &text, &out]);
+    (result, out)
+}
+
+#[test]
+fn log_write_reads_back_what_log_dump_printed() {
+    // The dump of a log, written again, gives the same bytes.
+    let dir = scratch("cli-log-write");
+    let original = btlog(&[(5, 1, 1), (9, 1, 2), (12, 1, 0)], b"");
+    fs::write(dir.join("in.btlog"), &original).unwrap();
+    let dumped = run(&[Path::new("log"), Path::new("dump"), &dir.join("in.btlog")]);
+    assert_eq!(dumped.status.code(), Some(0));
+    let (out, file) = log_write(&dir, &String::from_utf8(dumped.stdout).unwrap());
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(out.stdout.is_empty() && out.stderr.is_empty());
+    assert_eq!(fs::read(&file).unwrap(), original);
+}
+
+#[test]
+fn log_write_takes_three_columns_and_comments() {
+    let dir = scratch("cli-log-write-short");
+    let (out, file) = log_write(
+        &dir,
+        "# hand-written\n\nt0_us 1000\n5 1 RUNNING\n9\t1\tSUCCESS\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        fs::read(&file).unwrap(),
+        btlog(&[(5, 1, 1), (9, 1, 2)], b"")
+    );
+}
+
+#[test]
+fn log_write_warns_about_a_uid_the_xml_lacks() {
+    let dir = scratch("cli-log-write-uid");
+    let (out, file) = log_write(&dir, "t0_us 1000\n5 7 RUNNING\n");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("no node in the XML has uid 7"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(fs::read(&file).unwrap(), btlog(&[(5, 7, 1)], b""));
+}
+
+#[test]
+fn log_write_refuses_records_it_cannot_read() {
+    let max = (1u64 << 48) - 1;
+    for (records, message) in [
+        ("5 1 RUNNING\n", "no t0_us line"),
+        ("t0_us 1\nt0_us 2\n", "line 2: t0_us is given twice"),
+        ("t0_us x\n", "line 1: t0_us x is not a whole number"),
+        ("t0_us 1\n5 1 running\n", "line 2: running is not a status"),
+        ("t0_us 1\n-1 1 IDLE\n", "line 2: offset -1 is not"),
+        (
+            &format!("t0_us 1\n{} 1 IDLE\n", max + 1),
+            "line 2: offset 281474976710656 is not",
+        ),
+        ("t0_us 1\n5 65536 IDLE\n", "line 2: uid 65536 is not"),
+        ("t0_us 1\n5 1\n", "line 2: expected t0_us"),
+        (
+            "t0_us 1\nrecords 2\n5 1 IDLE\n",
+            "records says 2, but 1 records follow",
+        ),
+        (
+            "xml_bytes 3\nt0_us 1\n",
+            "line 1: xml_bytes is 3, but the XML file has 69 bytes",
+        ),
+    ] {
+        let dir = scratch("cli-log-write-bad");
+        let (out, file) = log_write(&dir, records);
+        assert_eq!(out.status.code(), Some(1), "{records:?}");
+        assert!(
+            stderr(&out).contains(message),
+            "{records:?}: {}",
+            stderr(&out)
+        );
+        assert!(!file.exists(), "{records:?}");
+    }
+    // The largest offset is accepted.
+    let dir = scratch("cli-log-write-max");
+    let (out, _) = log_write(&dir, &format!("t0_us 1\n{max} 1 IDLE\n"));
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn log_write_does_not_overwrite() {
+    let dir = scratch("cli-log-write-exists");
+    fs::write(dir.join("out.btlog"), b"keep").unwrap();
+    let (out, file) = log_write(&dir, "t0_us 1\n");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("exists; not overwritten"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(fs::read(&file).unwrap(), b"keep");
+}

@@ -37,15 +37,16 @@ project). In `crates/coppice-btlog`: F11 and F12 (reading and writing
 `.btlog` recordings, checked against BehaviorTree.CPP 4.9.0's own logger).
 In `crates/coppice-monitor`: the live-monitor wire codec (spec §5: headers,
 reply checks, STATUS decoding, transition drains), without a transport yet.
-The `coppice` binary exposes them as `check`, `save`, `save-as` and
-`log dump` (see [`docs/design-decisions.md`](docs/design-decisions.md)
+The `coppice` binary exposes them as `check`, `save`, `save-as`,
+`log dump` and `log write` (see [`docs/design-decisions.md`](docs/design-decisions.md)
 D10):
 
 ```sh
 coppice check project.btproj                          # diagnostics, includes followed
 coppice save-as tree.xml out.xml --reference          # the reference's save-as
 coppice save trees/a.xml --reference --project project.btproj
-coppice log dump run.btlog                            # one line per transition
+coppice log dump run.btlog > run.txt                  # one line per transition
+coppice log write tree.xml run.txt copy.btlog         # the same records, written back
 ```
 
 ## Build and test
