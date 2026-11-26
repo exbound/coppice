@@ -939,3 +939,187 @@ fn a_tree_file_loaded_before_the_models_keeps_its_copy_and_says_so() {
     let saved = fs::read_to_string(&tree).unwrap();
     assert!(!saved.contains("name=\"q\""), "{saved}");
 }
+
+const LOG_XML: &[u8] = b"<root><BehaviorTree ID=\"M\"><Sequence _uid=\"1\"/></BehaviorTree></root>";
+
+fn log_write(dir: &Path, records: &str) -> (std::process::Output, PathBuf) {
+    let (xml, text, out) = (dir.join("t.xml"), dir.join("r.txt"), dir.join("out.btlog"));
+    fs::write(&xml, LOG_XML).unwrap();
+    fs::write(&text, records).unwrap();
+    let result = run(&[Path::new("log"), Path::new("write"), &xml, &text, &out]);
+    (result, out)
+}
+
+#[test]
+fn log_write_reads_back_what_log_dump_and_log_xml_printed() {
+    // The dump of a log and its XML, written again, give the same bytes.
+    let dir = scratch("cli-log-write");
+    let original = btlog(&[(5, 1, 1), (9, 1, 2), (12, 1, 0)], b"");
+    let input = dir.join("in.btlog");
+    fs::write(&input, &original).unwrap();
+    let dumped = run(&[Path::new("log"), Path::new("dump"), &input]);
+    assert_eq!(dumped.status.code(), Some(0));
+    let xml = run(&[Path::new("log"), Path::new("xml"), &input]);
+    assert_eq!(xml.status.code(), Some(0), "{}", stderr(&xml));
+    assert_eq!(xml.stdout, LOG_XML);
+    let (records, out_file) = (dir.join("r.txt"), dir.join("out.btlog"));
+    fs::write(dir.join("t.xml"), &xml.stdout).unwrap();
+    fs::write(&records, &dumped.stdout).unwrap();
+    let out = run(&[
+        Path::new("log"),
+        Path::new("write"),
+        &dir.join("t.xml"),
+        &records,
+        &out_file,
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(out.stdout.is_empty() && out.stderr.is_empty());
+    assert_eq!(fs::read(&out_file).unwrap(), original);
+}
+
+#[test]
+fn log_xml_prints_the_xml_of_a_damaged_log_and_fails() {
+    let dir = scratch("cli-log-xml-bad");
+    let file = dir.join("run.btlog");
+    fs::write(&file, btlog(&[(5, 1, 1)], b"\x01\x02")).unwrap();
+    let out = run(&[Path::new("log"), Path::new("xml"), &file]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.stdout, LOG_XML);
+    assert!(
+        stderr(&out).contains("the XML above is whole"),
+        "{}",
+        stderr(&out)
+    );
+    // With the XML itself cut short, nothing is printed.
+    fs::write(&file, &btlog(&[], b"")[..40]).unwrap();
+    let out = run(&[Path::new("log"), Path::new("xml"), &file]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
+fn log_write_takes_three_columns_and_comments() {
+    let dir = scratch("cli-log-write-short");
+    let (out, file) = log_write(
+        &dir,
+        "# hand-written\n\nt0_us 1000\n5 1 RUNNING\n9\t1\tSUCCESS\n",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        fs::read(&file).unwrap(),
+        btlog(&[(5, 1, 1), (9, 1, 2)], b"")
+    );
+}
+
+#[test]
+fn log_write_warns_about_a_uid_the_xml_lacks() {
+    let dir = scratch("cli-log-write-uid");
+    let (out, file) = log_write(&dir, "t0_us 1000\n5 7 RUNNING\n");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("t.xml: no node has uid 7"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(fs::read(&file).unwrap(), btlog(&[(5, 7, 1)], b""));
+}
+
+#[test]
+fn log_write_refuses_records_it_cannot_read() {
+    let max = (1u64 << 48) - 1;
+    for (records, message) in [
+        ("5 1 RUNNING\n", "no t0_us line"),
+        ("t0_us 1\nt0_us 2\n", "line 2: t0_us is given twice"),
+        ("t0_us x\n", "line 1: t0_us x is not a whole number"),
+        ("t0_us 1\n5 1 running\n", "line 2: running is not a status"),
+        ("t0_us 1\n-1 1 IDLE\n", "line 2: offset -1 is not"),
+        (
+            &format!("t0_us 1\n{} 1 IDLE\n", max + 1),
+            "line 2: offset 281474976710656 is not",
+        ),
+        ("t0_us 1\n5 65536 IDLE\n", "line 2: uid 65536 is not"),
+        ("t0_us 1\n5 1\n", "line 2: expected t0_us"),
+        (
+            "t0_us 1\nrecords 2\n5 1 IDLE\n",
+            "records says 2, but 1 records follow",
+        ),
+        (
+            "xml_bytes 3\nt0_us 1\n",
+            "line 1: xml_bytes is 3, but the XML file has 69 bytes",
+        ),
+        (
+            "t0_us 1\nrecords 0\nrecords 0\n",
+            "line 3: records is given twice",
+        ),
+        (
+            "t0_us 1\nxml_bytes 69\nxml_bytes 69\n",
+            "line 3: xml_bytes is given twice",
+        ),
+        ("t0_us 5 6\n", "line 1: t0_us takes exactly one value"),
+    ] {
+        let dir = scratch("cli-log-write-bad");
+        let (out, file) = log_write(&dir, records);
+        assert_eq!(out.status.code(), Some(1), "{records:?}");
+        assert!(
+            stderr(&out).contains(message),
+            "{records:?}: {}",
+            stderr(&out)
+        );
+        assert!(!file.exists(), "{records:?}");
+    }
+    // The largest offset is accepted.
+    let dir = scratch("cli-log-write-max");
+    let (out, _) = log_write(&dir, &format!("t0_us 1\n{max} 1 IDLE\n"));
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn log_write_does_not_overwrite() {
+    let dir = scratch("cli-log-write-exists");
+    fs::write(dir.join("out.btlog"), b"keep").unwrap();
+    let (out, file) = log_write(&dir, "t0_us 1\n");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("exists; not overwritten"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(fs::read(&file).unwrap(), b"keep");
+}
+
+#[test]
+fn log_write_skips_a_byte_order_mark() {
+    let dir = scratch("cli-log-write-bom");
+    let (out, file) = log_write(&dir, "\u{feff}t0_us 1000\n5 1 RUNNING\n");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(fs::read(&file).unwrap(), btlog(&[(5, 1, 1)], b""));
+}
+
+#[test]
+fn log_operands_that_look_like_options_are_usage_errors() {
+    for args in [
+        vec!["log", "xml", "-x.btlog"],
+        vec!["log", "write", "t.xml", "r.txt", "-out.btlog"],
+        vec!["log", "write", "-t.xml", "r.txt", "out.btlog"],
+    ] {
+        let out = coppice(&args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(stderr(&out).contains("./-"), "{args:?}: {}", stderr(&out));
+    }
+}
+
+#[test]
+fn log_write_warns_where_the_xml_does_not_parse() {
+    let dir = scratch("cli-log-write-xml");
+    let (xml, text, out) = (dir.join("t.xml"), dir.join("r.txt"), dir.join("out.btlog"));
+    fs::write(&xml, "<root>\n<a>\n</b>\n</root>").unwrap();
+    fs::write(&text, "t0_us 1\n").unwrap();
+    let result = run(&[Path::new("log"), Path::new("write"), &xml, &text, &out]);
+    assert_eq!(result.status.code(), Some(0), "{}", stderr(&result));
+    // </b> starts at byte 11 of the XML file.
+    assert!(
+        stderr(&result).contains("t.xml: byte 11: does not parse"),
+        "{}",
+        stderr(&result)
+    );
+}
