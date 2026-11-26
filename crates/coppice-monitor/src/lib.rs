@@ -1,9 +1,9 @@
 //! The live-monitor wire protocol, as `docs/engineering-spec.md` §5 lays it
 //! out: request and reply headers, the reply checks, and the payloads v1
 //! reads (FULLTREE, STATUS, recording start, transition drain, and the
-//! breakpoint notice), and the blackboard request's payload. This is the
-//! codec only. The sockets (§5.1) arrive with the transport, and the
-//! blackboard reply's decoder (F15) with its MessagePack dependency.
+//! breakpoint notice), and the blackboard request's payload; and
+//! [`Client`], which sends them over the publisher's request socket (§5.1)
+//! and decodes the blackboard reply (F15).
 //!
 //! Every multi-byte field is little-endian. The publisher writes them in
 //! its host's byte order, which is little-endian on every platform it is
@@ -12,6 +12,10 @@
 use std::fmt;
 
 use coppice_btlog::{RECORD_LEN, Status, Transition};
+
+mod client;
+
+pub use client::{Client, ClientError};
 
 /// The protocol byte of every request and reply.
 pub const PROTOCOL: u8 = 2;
