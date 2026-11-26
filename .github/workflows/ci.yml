@@ -20,6 +20,11 @@ jobs:
       - name: Setup
         run: just setup
 
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.22.1
+
       - name: Check
         run: just check
 

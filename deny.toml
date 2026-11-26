@@ -1,0 +1,47 @@
+# Dependency policy (docs/design-decisions.md D9): licences compatible with
+# Apache-2.0 distribution, crates.io as the only source.
+
+[graph]
+all-features = true
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MIT",
+    "Unlicense",
+    # libzmq 4.3.4 as bundled and statically linked by zeromq-src: the
+    # LGPL-3.0 with libzmq's static-linking exception (its
+    # vendor/COPYING.LESSER), which allows distributing the linked
+    # executable under terms of one's choice.
+    "LicenseRef-libzmq-LGPL-3.0-static-exception",
+]
+confidence-threshold = 0.93
+# A clarification whose hash no longer matches stops applying, leaving its
+# licence unused: fail then, rather than fall back to the declared one.
+unused-allowed-license = "deny"
+
+# zeromq-src declares only its own build code's licence. The C sources it
+# compiles carry their own: libzmq (above); the SHA-1 it builds in on every
+# platform, BSD-3-Clause; and wepoll, compiled on Windows only,
+# BSD-2-Clause. Each is tied to its licence file's hash.
+[[licenses.clarify]]
+crate = "zeromq-src"
+expression = "(MIT OR Apache-2.0) AND LicenseRef-libzmq-LGPL-3.0-static-exception AND BSD-3-Clause AND BSD-2-Clause"
+license-files = [
+    { path = "vendor/COPYING.LESSER", hash = 0x61492e3d },
+    { path = "vendor/external/sha1/license.txt", hash = 0xb68fad12 },
+    { path = "vendor/external/wepoll/license.txt", hash = 0x2627a8f4 },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

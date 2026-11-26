@@ -13,20 +13,27 @@ Toolchain prerequisites and the local development loop for coppice.
 - A **C linker**, which Rust needs to link the binary and the tests:
   `build-essential` on Debian/Ubuntu, the Xcode command-line tools on macOS,
   the MSVC build tools on Windows. Without one, `just test` fails with a
-  "linker not found" error. (`just check` currently passes without one,
-  because nothing it builds is linked; that stops being true once a
-  dependency with a build script arrives.)
+  "linker not found" error.
+- A **C++ compiler** (`g++` from `build-essential`, Clang, or MSVC). The
+  live-monitor crate's ZeroMQ binding compiles the libzmq 4.3.4 source it
+  bundles and links it statically (design decision D4), so no system
+  libzmq is needed, and `just check` builds it too.
+- [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) **0.22.1**
+  (`cargo install --locked cargo-deny@0.22.1`), which `just check` runs
+  to hold every dependency to `deny.toml` (design decision D9).
 - [`just`](https://github.com/casey/just) for the task recipes.
 
-`just check` and `just test` need nothing else. `just oracle` (the `.btlog`
+`just check` and `just test` need nothing else. Building after a change to
+dependencies downloads the new crates once into cargo's cache; in a
+sandboxed agent session that cannot write `~/.cargo/registry`, a person
+runs `cargo fetch` once, outside the sandbox. `just oracle` (the `.btlog`
 oracle, spec §8) also needs CMake 3.16.3 or later and a C++17 compiler
 using GCC's libstdc++ (as on Linux; not libc++ or MSVC, whose clocks the
 harness's timing assumption does not hold for), to build BehaviorTree.CPP 4.9.0 and the
 harness in `tests/harness/`. It runs with CMake 3.31.6 and GCC 14.2 locally,
 and GCC 13.3 in CI. It downloads the library's release
 archive from GitHub, or builds offline from an extracted copy named by
-`BTCPP_SOURCE_DIR`. The live-monitor crate will add libzmq; this file will
-say so when it does.
+`BTCPP_SOURCE_DIR`.
 
 ## First-time setup
 
@@ -42,7 +49,7 @@ outside the sandbox.
 
 ```sh
 just fmt      # format
-just check    # rustfmt --check, the lint opt-in check, then clippy with warnings as errors (CI equivalent)
+just check    # rustfmt --check, the lint opt-in check, clippy with warnings as errors, then cargo-deny (CI equivalent)
 just test     # cargo test across the workspace
 ```
 
