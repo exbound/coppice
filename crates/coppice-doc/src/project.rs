@@ -422,6 +422,18 @@ impl Project {
     /// - any save while an include is unresolved, as the unreadable file
     ///   may declare a model the save depends on.
     ///
+    /// A model declared again in another document than the first to
+    /// declare it (a `DuplicateModel` there) is ignored, so it refuses
+    /// nothing, and a save can refresh a tree file's stale copy of a
+    /// project model; this file's own declaration that is not the writer's
+    /// copy of the winner, which the save replaces or drops, is named in
+    /// [`Written::notes`]. Two exceptions refuse: either declaration is a
+    /// `SubTree` model, which the library itself reads; or this file holds
+    /// the declaration that wins, its tree does not use the model, and the
+    /// next declaration in load order, which would win once the save drops
+    /// it, is not the writer's copy of it. A repeat within this document is
+    /// refused by the writer, as before (spec §3.7).
+    ///
     /// A refusal about a declared model points into the document that
     /// declared it.
     ///
@@ -438,18 +450,31 @@ impl Project {
         let blocking: Vec<ProjectDiagnostic> = all
             .iter()
             .filter(|p| {
-                p.document == document
-                    || matches!(
-                        p.diagnostic.kind,
-                        DiagnosticKind::UnknownModelKind
-                            | DiagnosticKind::IncompleteModel
-                            | DiagnosticKind::DuplicateModelsBlock
-                            | DiagnosticKind::DuplicateModel
-                            | DiagnosticKind::ModelShadowsBuiltin
-                    )
+                // A later declaration of a model ID is ignored wherever it
+                // is, so it never changes what this save writes: the block
+                // is filled from the declaration that wins (spec §3.7).
+                p.diagnostic.kind != DiagnosticKind::DuplicateModel
+                    && (p.document == document
+                        || matches!(
+                            p.diagnostic.kind,
+                            DiagnosticKind::UnknownModelKind
+                                | DiagnosticKind::IncompleteModel
+                                | DiagnosticKind::DuplicateModelsBlock
+                                | DiagnosticKind::ModelShadowsBuiltin
+                        ))
             })
             .cloned()
             .collect();
+        let redeclared = self.redeclared();
+        let mut blocking = blocking;
+        for r in &redeclared {
+            if r.winner.kind == crate::tree::ModelKind::SubTree
+                || r.loser.kind == crate::tree::ModelKind::SubTree
+            {
+                blocking.push(r.diagnostic(self));
+            }
+        }
+        blocking.sort_by_key(|p| (p.document, p.diagnostic.offset));
         if !blocking.is_empty() {
             return Err(blocking);
         }
@@ -461,7 +486,7 @@ impl Project {
                 origin.entry(m.id).or_insert(i);
             }
         }
-        let written = write_parts(&d.tree, &self.models(), options).map_err(|r| {
+        let mut written = write_parts(&d.tree, &self.models(), options).map_err(|r| {
             let mut out: Vec<ProjectDiagnostic> = r
                 .tree
                 .into_iter()
@@ -481,6 +506,53 @@ impl Project {
             out.sort_by_key(|p| (p.document, p.diagnostic.offset));
             out
         })?;
+        // A winning declaration this save drops, whose ID the next
+        // declaration in load order would then take over, differently.
+        let mut handed_over: Vec<ProjectDiagnostic> = Vec::new();
+        // A repeat of an ID within this document never gets here: the
+        // writer has refused it.
+        for m in d.tree.models() {
+            if origin.get(&m.id) != Some(&document) || written.models.contains(&m.id) {
+                continue;
+            }
+            if let Some((next, n)) = self.next_declaration(&m.id, document)
+                && !written_copy(&m, &n)
+            {
+                handed_over.push(ProjectDiagnostic {
+                    document,
+                    diagnostic: Diagnostic {
+                        kind: DiagnosticKind::DuplicateModel,
+                        offset: m.offset,
+                        message: format!(
+                            "this save drops model {}, which the tree does not use; the declaration in {}, which is not the writer's copy of this one, would then be used",
+                            m.id,
+                            self.documents[next].path.display()
+                        ),
+                    },
+                });
+            }
+        }
+        if !handed_over.is_empty() {
+            return Err(handed_over);
+        }
+        // This file's own differing declarations, which the save replaces
+        // or drops.
+        for r in redeclared.iter().filter(|r| r.loser_document == document) {
+            let what = if written.models.contains(&r.loser.id) {
+                "the save writes that one instead"
+            } else {
+                "the save drops it, as the tree does not use the model"
+            };
+            written.notes.push(Diagnostic {
+                kind: DiagnosticKind::DuplicateModel,
+                offset: r.loser.offset,
+                message: format!(
+                    "this file's declaration of model {} is not the writer's copy of the one in {}; {what}",
+                    r.loser.id,
+                    self.documents[r.winner_document].path.display()
+                ),
+            });
+        }
         let unresolved: Vec<ProjectDiagnostic> = all
             .into_iter()
             .filter(|p| {
@@ -516,6 +588,54 @@ impl Project {
             return Err(out);
         }
         Ok(written)
+    }
+
+    /// Each model declared again, differently, in a later document than
+    /// the first to declare its `ID`: the later declaration (the first in
+    /// its document) against the one that wins. A declaration that is the
+    /// winner's written copy is not listed (spec §2.3.1).
+    fn redeclared(&self) -> Vec<Redeclared> {
+        let mut winners: HashMap<String, (usize, NodeModel)> = HashMap::new();
+        let mut out = Vec::new();
+        for (document, d) in self.documents.iter().enumerate() {
+            let mut here: HashSet<String> = HashSet::new();
+            for m in d.tree.models() {
+                if !here.insert(m.id.clone()) {
+                    continue;
+                }
+                match winners.get(&m.id) {
+                    None => {
+                        winners.insert(m.id.clone(), (document, m));
+                    }
+                    Some((w, winner)) if *w != document && !written_copy(winner, &m) => {
+                        out.push(Redeclared {
+                            winner_document: *w,
+                            winner: winner.clone(),
+                            loser_document: document,
+                            loser: m,
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        out
+    }
+
+    /// The first declaration of `id` in a document loaded after
+    /// `document`, with that document's index.
+    fn next_declaration(&self, id: &str, document: usize) -> Option<(usize, NodeModel)> {
+        self.documents
+            .iter()
+            .enumerate()
+            .skip(document + 1)
+            .find_map(|(i, d)| {
+                d.tree
+                    .models()
+                    .into_iter()
+                    .find(|m| m.id == id)
+                    .map(|m| (i, m))
+            })
     }
 
     /// Everything worth reporting across the project, sorted by document
@@ -646,5 +766,31 @@ impl Project {
 
         out.sort_by_key(|p| (p.document, p.diagnostic.offset));
         out
+    }
+}
+
+/// A model declared again, differently, in a later document.
+struct Redeclared {
+    winner_document: usize,
+    winner: NodeModel,
+    loser_document: usize,
+    loser: NodeModel,
+}
+
+impl Redeclared {
+    /// The `DuplicateModel` at the later declaration.
+    fn diagnostic(&self, project: &Project) -> ProjectDiagnostic {
+        ProjectDiagnostic {
+            document: self.loser_document,
+            diagnostic: Diagnostic {
+                kind: DiagnosticKind::DuplicateModel,
+                offset: self.loser.offset,
+                message: format!(
+                    "model {} is already declared, differently, in {}; the library reads SubTree models itself, so a save waits until the two agree",
+                    self.loser.id,
+                    project.documents[self.winner_document].path.display()
+                ),
+            },
+        }
     }
 }

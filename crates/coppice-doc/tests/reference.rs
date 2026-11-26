@@ -1051,14 +1051,9 @@ fn a_project_save_refuses_the_projects_model_diagnostics() {
         .iter()
         .map(|d| (d.document, d.diagnostic.kind))
         .collect();
-    // C's nameless port in the project file, and A declared again in b.xml.
-    assert_eq!(
-        refused,
-        [
-            (0, DiagnosticKind::IncompleteModel),
-            (1, DiagnosticKind::DuplicateModel),
-        ]
-    );
+    // C's nameless port in the project file. A declared again in b.xml is
+    // ignored, so it blocks nothing.
+    assert_eq!(refused, [(0, DiagnosticKind::IncompleteModel)]);
     // An unrelated problem elsewhere in the project does not block a save:
     // here another file lacks its BTCPP_format.
     let proj = v4(r#"<include path="b.xml"/><include path="other.xml"/>"#);
@@ -1151,8 +1146,8 @@ fn a_refusal_about_a_model_points_into_the_document_that_declared_it() {
 }
 
 #[test]
-fn a_model_declared_again_in_another_document_blocks_the_save() {
-    // t.xml is saved; m.xml, loaded after it, declares A again.
+fn a_model_declared_again_in_another_document_does_not_block_the_save() {
+    // t.xml is saved; m.xml, loaded after it, declares A again, and loses.
     let proj = v4(r#"<include path="t.xml"/><include path="m.xml"/>"#);
     let t = v4(
         r#"<BehaviorTree ID="T"><A/></BehaviorTree><TreeNodesModel><Action ID="A"/></TreeNodesModel>"#,
@@ -1163,10 +1158,77 @@ fn a_model_declared_again_in_another_document_blocks_the_save() {
         ("/p/t.xml", &t),
         ("/p/m.xml", &m),
     ]);
-    assert_eq!(
-        project_refusals(&p, 1, &ReferenceOptions::default()),
-        [(2, DiagnosticKind::DuplicateModel, at(&m, "<Condition"))]
+    assert!(
+        p.diagnostics()
+            .iter()
+            .any(|d| d.document == 2 && d.diagnostic.kind == DiagnosticKind::DuplicateModel)
     );
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert!(
+        written.text.contains(r#"<Action ID="A"/>"#),
+        "{}",
+        written.text
+    );
+    assert!(!written.text.contains("Condition"), "{}", written.text);
+}
+
+#[test]
+fn a_save_replaces_the_saved_files_stale_copy_of_a_project_model() {
+    // b.xml's copy of A predates the project's port y (#15).
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="A"><input_port name="x"/><input_port name="y"/></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><A x="1" y="2"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="A"><input_port name="x"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[("/p/proj.btproj", &proj), ("/p/b.xml", &b)]);
+    assert_eq!(
+        p.diagnostics()
+            .iter()
+            .map(|d| (d.document, d.diagnostic.kind))
+            .collect::<Vec<_>>(),
+        [(1, DiagnosticKind::DuplicateModel)]
+    );
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert!(
+        written.text.contains(r#"<input_port name="y"/>"#),
+        "{}",
+        written.text
+    );
+}
+
+#[test]
+fn stale_copies_in_two_tree_files_block_neither_save() {
+    // Each file's stale copy of A would otherwise refuse the other's save.
+    let proj = v4(concat!(
+        r#"<include path="a.xml"/><include path="b.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="A"><input_port name="x"/><input_port name="y"/></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    let stale = |id: &str| {
+        v4(&format!(
+            r#"<BehaviorTree ID="{id}"><A x="1"/></BehaviorTree><TreeNodesModel><Action ID="A"><input_port name="x"/></Action></TreeNodesModel>"#
+        ))
+    };
+    let (a, b) = (stale("TA"), stale("TB"));
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/a.xml", &a),
+        ("/p/b.xml", &b),
+    ]);
+    for document in [1, 2] {
+        let written = p
+            .write_reference(document, &ReferenceOptions::default())
+            .unwrap();
+        assert!(
+            written.text.contains(r#"<input_port name="y"/>"#),
+            "{}",
+            written.text
+        );
+    }
 }
 
 #[test]
@@ -1243,4 +1305,316 @@ fn a_file_with_no_tree_is_refused() {
         refusals(&src, &ReferenceOptions::default()),
         [(DiagnosticKind::NotInRecord, 0)]
     );
+}
+
+#[test]
+fn a_save_that_would_hand_a_model_to_a_differing_declaration_is_refused() {
+    // t.xml declares N first and does not use it; o.xml declares N
+    // differently and uses it. Saving t.xml would drop N, and o.xml's
+    // declaration would win.
+    let proj = v4(r#"<include path="t.xml"/><include path="o.xml"/>"#);
+    let t = v4(concat!(
+        r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="N"><input_port name="a"/></Action></TreeNodesModel>"#,
+    ));
+    let o = v4(concat!(
+        r#"<BehaviorTree ID="O"><N a="1"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="N"><output_port name="b"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/o.xml", &o),
+    ]);
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [(
+            1,
+            DiagnosticKind::DuplicateModel,
+            at(&t, r#"<Action ID="N""#)
+        )]
+    );
+    // A later declaration that is the writer's copy takes over unchanged.
+    let o = v4(concat!(
+        r#"<BehaviorTree ID="O"><N a="1"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="N"><input_port name="a"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/o.xml", &o),
+    ]);
+    assert!(p.write_reference(1, &ReferenceOptions::default()).is_ok());
+}
+
+#[test]
+fn a_repeat_within_the_saved_document_is_still_refused() {
+    let proj = v4(r#"<include path="t.xml"/><include path="o.xml"/>"#);
+    let repeat = |tree: &str| {
+        v4(&format!(
+            r#"<BehaviorTree ID="{tree}"><AlwaysSuccess/></BehaviorTree><TreeNodesModel><Action ID="N"/><Action ID="N"/></TreeNodesModel>"#
+        ))
+    };
+    let (t, o) = (repeat("T"), repeat("O"));
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/o.xml", &o),
+    ]);
+    let second = t.rfind(r#"<Action ID="N""#).unwrap();
+    // t.xml's own repeat refuses its save; o.xml's repeats (within the
+    // file, and of t.xml's N) do not.
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [(1, DiagnosticKind::DuplicateModel, second)]
+    );
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &tree_of("<AlwaysSuccess/>")),
+        ("/p/o.xml", &o),
+    ]);
+    assert!(p.write_reference(1, &ReferenceOptions::default()).is_ok());
+}
+
+#[test]
+fn a_differing_subtree_model_declared_again_still_refuses() {
+    let proj = v4(concat!(
+        r#"<include path="t.xml"/><include path="o.xml"/>"#,
+        r#"<TreeNodesModel><Action ID="Sub"/></TreeNodesModel>"#,
+    ));
+    let t = tree_of("<AlwaysSuccess/>");
+    let o = v4(
+        r#"<TreeNodesModel><SubTree ID="Sub"><input_port name="k"/></SubTree></TreeNodesModel>"#,
+    );
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/o.xml", &o),
+    ]);
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [(2, DiagnosticKind::DuplicateModel, at(&o, "<SubTree"))]
+    );
+}
+
+#[test]
+fn a_save_notes_the_differing_copy_it_replaces() {
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="A"><input_port name="x"/></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><A x="1"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="A"><input_port name="x"/><output_port name="r"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[("/p/proj.btproj", &proj), ("/p/b.xml", &b)]);
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert!(!written.text.contains(r#"name="r""#), "{}", written.text);
+    assert_eq!(
+        written
+            .notes
+            .iter()
+            .map(|n| (n.kind, n.offset))
+            .collect::<Vec<_>>(),
+        [(DiagnosticKind::DuplicateModel, at(&b, r#"<Action ID="A""#))]
+    );
+    assert!(
+        written.notes[0]
+            .message
+            .contains("the save writes that one instead"),
+        "{}",
+        written.notes[0].message
+    );
+}
+
+#[test]
+fn a_save_is_refused_once_for_each_model_it_would_hand_over() {
+    // t.xml holds the winners of M and N and uses neither; a.xml and b.xml
+    // each declare both differently.
+    let proj = v4(r#"<include path="t.xml"/><include path="a.xml"/><include path="b.xml"/>"#);
+    let t = v4(concat!(
+        r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="M"/><Action ID="N"/></TreeNodesModel>"#,
+    ));
+    let other = v4(r#"<TreeNodesModel><Condition ID="M"/><Condition ID="N"/></TreeNodesModel>"#);
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/a.xml", &other),
+        ("/p/b.xml", &other),
+    ]);
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [
+            (
+                1,
+                DiagnosticKind::DuplicateModel,
+                at(&t, r#"<Action ID="M""#)
+            ),
+            (
+                1,
+                DiagnosticKind::DuplicateModel,
+                at(&t, r#"<Action ID="N""#)
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_save_may_drop_a_model_the_next_declaration_copies() {
+    // a.xml's copy of M would win once t.xml's is dropped, unchanged; b.xml's
+    // differing declaration stays ignored.
+    let proj = v4(r#"<include path="t.xml"/><include path="a.xml"/><include path="b.xml"/>"#);
+    let t = v4(concat!(
+        r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="M"/></TreeNodesModel>"#,
+    ));
+    let a = v4(r#"<TreeNodesModel><Action ID="M"/></TreeNodesModel>"#);
+    let b = v4(r#"<TreeNodesModel><Condition ID="M"/></TreeNodesModel>"#);
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/a.xml", &a),
+        ("/p/b.xml", &b),
+    ]);
+    assert!(p.write_reference(1, &ReferenceOptions::default()).is_ok());
+}
+
+#[test]
+fn a_winning_subtree_model_declared_again_differently_still_refuses() {
+    let proj = v4(concat!(
+        r#"<include path="t.xml"/><include path="o.xml"/>"#,
+        r#"<TreeNodesModel><SubTree ID="Sub"/></TreeNodesModel>"#,
+    ));
+    let t = tree_of("<AlwaysSuccess/>");
+    let o = v4(r#"<TreeNodesModel><Action ID="Sub"/></TreeNodesModel>"#);
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/t.xml", &t),
+        ("/p/o.xml", &o),
+    ]);
+    assert_eq!(
+        project_refusals(&p, 1, &ReferenceOptions::default()),
+        [(2, DiagnosticKind::DuplicateModel, at(&o, "<Action"))]
+    );
+}
+
+#[test]
+fn a_save_notes_a_differing_declaration_its_tree_does_not_use_as_dropped() {
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/>"#,
+        r#"<TreeNodesModel><Action ID="A"/></TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Condition ID="A"/></TreeNodesModel>"#,
+    ));
+    let p = project(&[("/p/proj.btproj", &proj), ("/p/b.xml", &b)]);
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert!(!written.text.contains(r#"ID="A""#), "{}", written.text);
+    let notes: Vec<_> = written.notes.iter().map(|n| n.message.as_str()).collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("the save drops it"), "{notes:?}");
+}
+
+#[test]
+fn a_save_notes_nothing_for_an_exact_copy() {
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="A"><input_port name="x"/></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><A x="1"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="A"><input_port name="x"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[("/p/proj.btproj", &proj), ("/p/b.xml", &b)]);
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert_eq!(written.notes, []);
+}
+
+/// A project of `t.xml`, holding the winning `<Action ID="M"/>` unused,
+/// then `files` in load order; the refusals of saving `t.xml`.
+fn hand_over(files: &[(&str, &str)]) -> Vec<(usize, DiagnosticKind, usize)> {
+    let includes: String = std::iter::once("t.xml")
+        .chain(files.iter().map(|(name, _)| *name))
+        .map(|name| format!(r#"<include path="{name}"/>"#))
+        .collect();
+    let proj = v4(&includes);
+    let t = v4(concat!(
+        r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="M"/></TreeNodesModel>"#,
+    ));
+    let mut all = vec![
+        ("/p/proj.btproj".to_owned(), proj),
+        ("/p/t.xml".to_owned(), t),
+    ];
+    all.extend(files.iter().map(|(n, x)| (format!("/p/{n}"), v4(x))));
+    let refs: Vec<(&str, &str)> = all.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let p = project(&refs);
+    match p.write_reference(1, &ReferenceOptions::default()) {
+        Ok(_) => Vec::new(),
+        Err(r) => r
+            .iter()
+            .map(|d| (d.document, d.diagnostic.kind, d.diagnostic.offset))
+            .collect(),
+    }
+}
+
+#[test]
+fn the_declaration_that_takes_over_may_be_documents_away() {
+    // a.xml declares nothing; b.xml's differing M would take over.
+    let refused = hand_over(&[
+        (
+            "a.xml",
+            r#"<BehaviorTree ID="A"><AlwaysSuccess/></BehaviorTree>"#,
+        ),
+        (
+            "b.xml",
+            r#"<TreeNodesModel><Condition ID="M"/></TreeNodesModel>"#,
+        ),
+    ]);
+    assert_eq!(
+        refused.iter().map(|r| (r.0, r.1)).collect::<Vec<_>>(),
+        [(1, DiagnosticKind::DuplicateModel)]
+    );
+}
+
+#[test]
+fn the_declaration_that_takes_over_is_the_first_in_its_document() {
+    // a.xml repeats M; its first declaration is the one that would win.
+    let copy_first = r#"<TreeNodesModel><Action ID="M"/><Condition ID="M"/></TreeNodesModel>"#;
+    assert_eq!(hand_over(&[("a.xml", copy_first)]), []);
+    let differing_first = r#"<TreeNodesModel><Condition ID="M"/><Action ID="M"/></TreeNodesModel>"#;
+    assert_eq!(
+        hand_over(&[("a.xml", differing_first)])
+            .iter()
+            .map(|r| (r.0, r.1))
+            .collect::<Vec<_>>(),
+        [(1, DiagnosticKind::DuplicateModel)]
+    );
+}
+
+#[test]
+fn a_losing_declaration_the_tree_does_not_use_is_dropped_not_refused() {
+    // b.xml loses M to the project and does not use it; c.xml, after it,
+    // declares M differently. Saving b.xml hands nothing over.
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/><include path="c.xml"/>"#,
+        r#"<TreeNodesModel><Action ID="M"/></TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Condition ID="M"/></TreeNodesModel>"#,
+    ));
+    let c = v4(r#"<TreeNodesModel><Decorator ID="M"/></TreeNodesModel>"#);
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/b.xml", &b),
+        ("/p/c.xml", &c),
+    ]);
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert_eq!(written.notes.len(), 1, "{:?}", written.notes);
+    assert!(written.notes[0].message.contains("the save drops it"));
 }

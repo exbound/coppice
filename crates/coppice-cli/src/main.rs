@@ -11,7 +11,8 @@ use std::process::ExitCode;
 
 use coppice_btlog::{DiagnosticKind as LogDiagnosticKind, Log, Status, XML_OFFSET};
 use coppice_doc::{
-    Diagnostic, Document, LoadError, Project, ReferenceOptions, TreeDocument, WriteMode, write_tree,
+    Diagnostic, DiagnosticKind, Document, LoadError, Project, ReferenceOptions, TreeDocument,
+    WriteMode, write_tree,
 };
 
 const USAGE: &str = "usage: coppice --version
@@ -300,6 +301,15 @@ fn save(file: &Path, rest: &[&str]) -> Outcome {
     };
     match project.write_reference(index, &o.writer()) {
         Ok(written) => {
+            // A declaration that loses to an earlier one does not block the
+            // save, but the user may have meant it to win: say which. The
+            // saved file's own is in the notes, as the save replaces it.
+            for pd in project.diagnostics() {
+                if pd.diagnostic.kind == DiagnosticKind::DuplicateModel && pd.document != index {
+                    let d = &documents[pd.document];
+                    report(&d.path, d.tree.document().source(), &pd.diagnostic);
+                }
+            }
             let d = &documents[index];
             for note in &written.notes {
                 report(&d.path, d.tree.document().source(), note);
