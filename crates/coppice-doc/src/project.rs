@@ -422,6 +422,11 @@ impl Project {
     /// - any save while an include is unresolved, as the unreadable file
     ///   may declare a model the save depends on.
     ///
+    /// A `DuplicateModel`, in that document or any other, refuses
+    /// nothing: the later declaration it marks is ignored, so the block
+    /// is the same without it, and a save can refresh a tree file's stale
+    /// copy of a project model.
+    ///
     /// A refusal about a declared model points into the document that
     /// declared it.
     ///
@@ -438,15 +443,18 @@ impl Project {
         let blocking: Vec<ProjectDiagnostic> = all
             .iter()
             .filter(|p| {
-                p.document == document
-                    || matches!(
-                        p.diagnostic.kind,
-                        DiagnosticKind::UnknownModelKind
-                            | DiagnosticKind::IncompleteModel
-                            | DiagnosticKind::DuplicateModelsBlock
-                            | DiagnosticKind::DuplicateModel
-                            | DiagnosticKind::ModelShadowsBuiltin
-                    )
+                // A later declaration of a model ID is ignored wherever it
+                // is, so it never changes what this save writes: the block
+                // is filled from the declaration that wins (spec §3.7).
+                p.diagnostic.kind != DiagnosticKind::DuplicateModel
+                    && (p.document == document
+                        || matches!(
+                            p.diagnostic.kind,
+                            DiagnosticKind::UnknownModelKind
+                                | DiagnosticKind::IncompleteModel
+                                | DiagnosticKind::DuplicateModelsBlock
+                                | DiagnosticKind::ModelShadowsBuiltin
+                        ))
             })
             .cloned()
             .collect();

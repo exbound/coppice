@@ -795,3 +795,117 @@ fn saves_follow_each_other_when_the_models_load_after_the_tree() {
         fs::read(fixture("reference/o-answers-2/out-o14/tree.xml")).unwrap()
     );
 }
+
+/// Adds port `q` to the project's `UsedModel`, after the trees were saved.
+fn add_port_q(project: &Path) {
+    let text = fs::read_to_string(project).unwrap().replace(
+        "      <input_port name=\"p\"/>",
+        "      <input_port name=\"p\"/>\n      <input_port name=\"q\"/>",
+    );
+    assert!(text.contains("name=\"q\""));
+    fs::write(project, text).unwrap();
+}
+
+fn save_in(project: &Path, tree: &Path) -> std::process::Output {
+    run(&[
+        Path::new("save"),
+        tree,
+        Path::new("--reference"),
+        Path::new("--project"),
+        project,
+    ])
+}
+
+#[test]
+fn a_save_refreshes_a_stale_copy_of_a_changed_project_model() {
+    // #15: the saved tree file's copy of UsedModel predates port q.
+    let dir = scratch("cli-save-stale");
+    copy_dir("reference/o-answers-2/in-o14-models", &dir);
+    let (project, tree) = (dir.join("proj.btproj"), dir.join("tree.xml"));
+    assert_eq!(save_in(&project, &tree).status.code(), Some(0));
+    add_port_q(&project);
+    let out = run(&[Path::new("check"), &project]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(stderr(&out).contains("DuplicateModel"), "{}", stderr(&out));
+    let out = save_in(&project, &tree);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    // The saved file's own stale copy is what the save replaces: no warning.
+    assert!(!stderr(&out).contains("DuplicateModel"), "{}", stderr(&out));
+    let saved = fs::read_to_string(&tree).unwrap();
+    assert!(saved.contains("<input_port name=\"q\"/>"), "{saved}");
+    let out = run(&[Path::new("check"), &project]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn stale_copies_in_two_tree_files_are_refreshed_one_save_at_a_time() {
+    // Both trees use UsedModel, so each saved file holds a copy; neither
+    // stale copy blocks the other file's save.
+    let dir = scratch("cli-save-stale-two");
+    copy_dir("reference/o-answers-2/in-o14-models", &dir);
+    let (project, tree, other) = (
+        dir.join("proj.btproj"),
+        dir.join("tree.xml"),
+        dir.join("other.xml"),
+    );
+    fs::copy(&tree, &other).unwrap();
+    let text = fs::read_to_string(&project).unwrap().replace(
+        "  <include path=\"unused.xml\"/>",
+        "  <include path=\"unused.xml\"/>\n  <include path=\"other.xml\"/>",
+    );
+    fs::write(&project, text).unwrap();
+    let text = fs::read_to_string(&other).unwrap();
+    let renamed = text.replacen("BehaviorTree ID=\"", "BehaviorTree ID=\"Other", 1);
+    assert_ne!(text, renamed);
+    fs::write(&other, renamed).unwrap();
+    for file in [&tree, &other] {
+        let out = save_in(&project, file);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    }
+    add_port_q(&project);
+    // The first save warns about the other file's copy, still stale.
+    let out = save_in(&project, &tree);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stderr(&out).contains("other.xml"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("tree.xml:"), "{}", stderr(&out));
+    let out = save_in(&project, &other);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("DuplicateModel"), "{}", stderr(&out));
+    for file in [&tree, &other] {
+        let saved = fs::read_to_string(file).unwrap();
+        assert!(saved.contains("<input_port name=\"q\"/>"), "{saved}");
+    }
+    let out = run(&[Path::new("check"), &project]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}
+
+#[test]
+fn a_tree_file_loaded_before_the_models_keeps_its_copy_and_says_so() {
+    // The first declaration in load order wins: here the saved tree's copy,
+    // so the changed declaration loaded after it is ignored and reported.
+    let dir = scratch("cli-save-stale-first");
+    copy_dir("reference/o-answers-2/in-o14-models", &dir);
+    let project = dir.join("proj.btproj");
+    let models = fs::read_to_string(&project).unwrap();
+    let block =
+        &models[models.find("  <TreeNodesModel>").unwrap()..models.find("</root>").unwrap()];
+    fs::write(
+        dir.join("models.xml"),
+        format!("<root BTCPP_format=\"4\">\n{block}</root>\n"),
+    )
+    .unwrap();
+    fs::write(
+        &project,
+        "<root BTCPP_format=\"4\" project_name=\"O14\">\n  <include path=\"tree.xml\"/>\n  <include path=\"models.xml\"/>\n</root>\n",
+    )
+    .unwrap();
+    let tree = dir.join("tree.xml");
+    assert_eq!(save_in(&project, &tree).status.code(), Some(0));
+    add_port_q(&dir.join("models.xml"));
+    let out = save_in(&project, &tree);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stderr(&out).contains("models.xml"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("DuplicateModel"), "{}", stderr(&out));
+    let saved = fs::read_to_string(&tree).unwrap();
+    assert!(!saved.contains("name=\"q\""), "{saved}");
+}

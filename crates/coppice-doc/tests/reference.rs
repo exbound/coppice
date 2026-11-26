@@ -1051,14 +1051,9 @@ fn a_project_save_refuses_the_projects_model_diagnostics() {
         .iter()
         .map(|d| (d.document, d.diagnostic.kind))
         .collect();
-    // C's nameless port in the project file, and A declared again in b.xml.
-    assert_eq!(
-        refused,
-        [
-            (0, DiagnosticKind::IncompleteModel),
-            (1, DiagnosticKind::DuplicateModel),
-        ]
-    );
+    // C's nameless port in the project file. A declared again in b.xml is
+    // ignored, so it blocks nothing.
+    assert_eq!(refused, [(0, DiagnosticKind::IncompleteModel)]);
     // An unrelated problem elsewhere in the project does not block a save:
     // here another file lacks its BTCPP_format.
     let proj = v4(r#"<include path="b.xml"/><include path="other.xml"/>"#);
@@ -1151,8 +1146,8 @@ fn a_refusal_about_a_model_points_into_the_document_that_declared_it() {
 }
 
 #[test]
-fn a_model_declared_again_in_another_document_blocks_the_save() {
-    // t.xml is saved; m.xml, loaded after it, declares A again.
+fn a_model_declared_again_in_another_document_does_not_block_the_save() {
+    // t.xml is saved; m.xml, loaded after it, declares A again, and loses.
     let proj = v4(r#"<include path="t.xml"/><include path="m.xml"/>"#);
     let t = v4(
         r#"<BehaviorTree ID="T"><A/></BehaviorTree><TreeNodesModel><Action ID="A"/></TreeNodesModel>"#,
@@ -1163,10 +1158,77 @@ fn a_model_declared_again_in_another_document_blocks_the_save() {
         ("/p/t.xml", &t),
         ("/p/m.xml", &m),
     ]);
-    assert_eq!(
-        project_refusals(&p, 1, &ReferenceOptions::default()),
-        [(2, DiagnosticKind::DuplicateModel, at(&m, "<Condition"))]
+    assert!(
+        p.diagnostics()
+            .iter()
+            .any(|d| d.document == 2 && d.diagnostic.kind == DiagnosticKind::DuplicateModel)
     );
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert!(
+        written.text.contains(r#"<Action ID="A"/>"#),
+        "{}",
+        written.text
+    );
+    assert!(!written.text.contains("Condition"), "{}", written.text);
+}
+
+#[test]
+fn a_save_replaces_the_saved_files_stale_copy_of_a_project_model() {
+    // b.xml's copy of A predates the project's port y (#15).
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="A"><input_port name="x"/><input_port name="y"/></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><A x="1" y="2"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="A"><input_port name="x"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[("/p/proj.btproj", &proj), ("/p/b.xml", &b)]);
+    assert_eq!(
+        p.diagnostics()
+            .iter()
+            .map(|d| (d.document, d.diagnostic.kind))
+            .collect::<Vec<_>>(),
+        [(1, DiagnosticKind::DuplicateModel)]
+    );
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert!(
+        written.text.contains(r#"<input_port name="y"/>"#),
+        "{}",
+        written.text
+    );
+}
+
+#[test]
+fn stale_copies_in_two_tree_files_block_neither_save() {
+    // Each file's stale copy of A would otherwise refuse the other's save.
+    let proj = v4(concat!(
+        r#"<include path="a.xml"/><include path="b.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="A"><input_port name="x"/><input_port name="y"/></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    let stale = |id: &str| {
+        v4(&format!(
+            r#"<BehaviorTree ID="{id}"><A x="1"/></BehaviorTree><TreeNodesModel><Action ID="A"><input_port name="x"/></Action></TreeNodesModel>"#
+        ))
+    };
+    let (a, b) = (stale("TA"), stale("TB"));
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/a.xml", &a),
+        ("/p/b.xml", &b),
+    ]);
+    for document in [1, 2] {
+        let written = p
+            .write_reference(document, &ReferenceOptions::default())
+            .unwrap();
+        assert!(
+            written.text.contains(r#"<input_port name="y"/>"#),
+            "{}",
+            written.text
+        );
+    }
 }
 
 #[test]

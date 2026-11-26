@@ -671,8 +671,18 @@ model the save depends on, one the block holds, the one the V3 importer
 would otherwise create, or one naming a built-in or subtree node, which
 the writer refuses when it can see it. A problem elsewhere that neither
 touches models nor leaves an include unresolved does not block the
-save. A refusal about a declared model points into the document that
-declared it.
+save. A `DuplicateModel` blocks no save,
+in the document being saved or any other: it marks a later declaration
+of an `ID`, which is ignored, so the block is written from the
+declaration that wins and is the same with or without it. This is what
+lets a save refresh a tree file whose copy of a project model has gone
+stale since it was last saved (§3.2); `check` still reports the stale
+copy, and a save that succeeds reports, as warnings, those in the
+project's other files. The first declaration in load order is the one
+that wins (§2.3.1), so a tree file loaded before the file holding the
+project's models keeps its own copy when saved, and the newer
+declaration is what gets reported. This choice is coppice's. A refusal
+about a declared model points into the document that declared it.
 
 The writer checks what it writes, not only what the diagnostics checked:
 every source attribute of a node must be written with its value (rule 6
