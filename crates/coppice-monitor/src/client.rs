@@ -10,6 +10,16 @@ use crate::{
     decode_status, recording_payload,
 };
 
+/// A FULLTREE reply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FullTree {
+    /// The tree XML in the runtime form.
+    pub xml: Vec<u8>,
+    /// The publisher's identity differs from the last FULLTREE's: it
+    /// restarted since.
+    pub restarted: bool,
+}
+
 /// A connection to a publisher's request socket.
 ///
 /// A request that gets no reply within the timeout leaves a REQ socket
@@ -21,8 +31,7 @@ pub struct Client {
     endpoint: String,
     timeout: Duration,
     next_id: u32,
-    /// The publisher's `tree_id` as of the last FULLTREE, or the first
-    /// reply before one.
+    /// The publisher's `tree_id` as of the last FULLTREE.
     tree_id: Option<[u8; 16]>,
 }
 
@@ -35,6 +44,9 @@ pub enum ClientError {
     Timeout(Duration),
     /// The reply failed a check of spec §5.2, or was an error reply.
     Reply(ReplyError),
+    /// No FULLTREE has succeeded yet: the session is not up (spec §5.4),
+    /// so nothing else is sent.
+    NotStarted,
     /// The reply carried a `tree_id` other than the one of the last
     /// FULLTREE: the publisher restarted. Every request but a FULLTREE
     /// gets this until the tree is fetched again ([`Client::full_tree`]),
@@ -50,6 +62,7 @@ impl fmt::Display for ClientError {
             ClientError::Socket(e) => write!(f, "socket: {e}"),
             ClientError::Timeout(t) => write!(f, "no reply within {} ms", t.as_millis()),
             ClientError::Reply(e) => e.fmt(f),
+            ClientError::NotStarted => write!(f, "no tree fetched yet"),
             ClientError::Restarted => write!(f, "the publisher restarted"),
             ClientError::Payload(e) => write!(f, "reply payload: {e}"),
         }
@@ -129,15 +142,18 @@ impl Client {
     }
 
     /// Sends one request and returns its reply's payload frames, checked
-    /// against spec §5.2. A reply from a restarted publisher is
-    /// [`ClientError::Restarted`], unless `fresh` (a FULLTREE, which is
-    /// what a restart calls for).
+    /// against spec §5.2, and the reply's `tree_id`. Only a FULLTREE
+    /// (`fresh`) goes out before a FULLTREE has succeeded, and only it
+    /// may carry a new `tree_id`; it is the caller's to adopt.
     fn request(
         &mut self,
         kind: RequestType,
         payload: Option<&[u8]>,
         fresh: bool,
-    ) -> Result<Vec<Vec<u8>>, ClientError> {
+    ) -> Result<(Vec<Vec<u8>>, [u8; 16]), ClientError> {
+        if self.tree_id.is_none() && !fresh {
+            return Err(ClientError::NotStarted);
+        }
         let header = RequestHeader {
             kind,
             unique_id: self.next_id,
@@ -162,26 +178,29 @@ impl Client {
             }
         };
         let checked = check_reply(&header, &reply)?;
-        match self.tree_id {
-            Some(known) if known != checked.tree_id && !fresh => {
-                return Err(ClientError::Restarted);
-            }
-            _ => self.tree_id = Some(checked.tree_id),
+        if !fresh && self.tree_id != Some(checked.tree_id) {
+            return Err(ClientError::Restarted);
         }
-        Ok(checked.payload.to_vec())
+        Ok((checked.payload.to_vec(), checked.tree_id))
     }
 
     /// FULLTREE: the tree XML in the runtime form, with each node's
-    /// `_uid`. Fetching it also accepts the publisher's current identity,
-    /// after a [`ClientError::Restarted`].
-    pub fn full_tree(&mut self) -> Result<Vec<u8>, ClientError> {
-        let frames = self.request(RequestType::FullTree, None, true)?;
-        one(frames)
+    /// `_uid`. A FULLTREE that succeeds starts the session, and accepts
+    /// the publisher's current identity after a [`ClientError::Restarted`].
+    /// [`FullTree::restarted`] says whether that identity is new: a
+    /// recording started before it is then lost, since a restarted
+    /// publisher is not recording.
+    pub fn full_tree(&mut self) -> Result<FullTree, ClientError> {
+        let (frames, tree_id) = self.request(RequestType::FullTree, None, true)?;
+        let xml = one(frames)?;
+        let restarted = self.tree_id.is_some_and(|known| known != tree_id);
+        self.tree_id = Some(tree_id);
+        Ok(FullTree { xml, restarted })
     }
 
     /// STATUS: every node's status, in tree order (F14).
     pub fn status(&mut self) -> Result<StatusBuffer, ClientError> {
-        let frames = self.request(RequestType::Status, None, false)?;
+        let (frames, _) = self.request(RequestType::Status, None, false)?;
         Ok(decode_status(&one(frames)?)?)
     }
 
@@ -198,7 +217,7 @@ impl Client {
                 format!("the name {bad:?} cannot be sent")
             })
         })?;
-        let frames = self.request(RequestType::Blackboard, Some(&payload), false)?;
+        let (frames, _) = self.request(RequestType::Blackboard, Some(&payload), false)?;
         let bytes = one(frames)?;
         let mut reader = std::io::Cursor::new(&bytes[..]);
         let value: serde_json::Value =
@@ -220,7 +239,7 @@ impl Client {
     /// microseconds, the recording's T0 (spec §5.6). Clears the
     /// publisher's transition buffer.
     pub fn start_recording(&mut self) -> Result<i64, ClientError> {
-        let frames = self.request(
+        let (frames, _) = self.request(
             RequestType::ToggleRecording,
             Some(recording_payload(true)),
             false,
@@ -231,7 +250,7 @@ impl Client {
     /// Stops recording. The records since the last drain stay in the
     /// publisher's buffer: drain once more before writing the file.
     pub fn stop_recording(&mut self) -> Result<(), ClientError> {
-        let frames = self.request(
+        let (frames, _) = self.request(
             RequestType::ToggleRecording,
             Some(recording_payload(false)),
             false,
@@ -249,7 +268,7 @@ impl Client {
 
     /// GET_TRANSITIONS: every buffered record, which the read clears.
     pub fn drain(&mut self) -> Result<Drain, ClientError> {
-        let frames = self.request(RequestType::GetTransitions, None, false)?;
+        let (frames, _) = self.request(RequestType::GetTransitions, None, false)?;
         Ok(decode_drain(&one(frames)?)?)
     }
 }

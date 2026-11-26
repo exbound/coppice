@@ -85,7 +85,8 @@ linked executable under terms of one's choice (a modified libzmq must
 extend the exception), so coppice stays Apache-2.0. The libzmq build also
 compiles a bundled SHA-1 (`vendor/external/sha1`, BSD-3-Clause, whose
 notice a binary distribution reproduces) and, on Windows only, wepoll
-(`vendor/external/wepoll`, BSD-2-Clause). The 4.3.4 tree records libzmq's
+(`vendor/external/wepoll`, BSD-2-Clause, whose notice a Windows binary
+distribution reproduces). The 4.3.4 tree records libzmq's
 contributors' permissions to relicense under MPL-2.0 (`vendor/RELICENSE/`);
 a later libzmq under MPL-2.0 would need a binding that links it.
 

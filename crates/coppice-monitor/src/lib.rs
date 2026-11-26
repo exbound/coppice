@@ -15,7 +15,7 @@ use coppice_btlog::{RECORD_LEN, Status, Transition};
 
 mod client;
 
-pub use client::{Client, ClientError};
+pub use client::{Client, ClientError, FullTree};
 
 /// The protocol byte of every request and reply.
 pub const PROTOCOL: u8 = 2;
