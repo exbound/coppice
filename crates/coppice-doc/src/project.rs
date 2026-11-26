@@ -425,13 +425,14 @@ impl Project {
     /// A model declared again in another document than the first to
     /// declare it (a `DuplicateModel` there) is ignored, so it refuses
     /// nothing, and a save can refresh a tree file's stale copy of a
-    /// project model; this file's own differing copy, which the save
-    /// replaces, is named in [`Written::notes`]. Two exceptions refuse:
-    /// either declaration is a `SubTree` model, which the library itself
-    /// reads; or this file holds the declaration that wins, its tree does
-    /// not use the model, and the next declaration in load order, which
-    /// would win once the save drops it, is not the writer's copy of it. A repeat within this document is refused
-    /// by the writer, as before (spec §3.7).
+    /// project model; this file's own declaration that is not the writer's
+    /// copy of the winner, which the save replaces or drops, is named in
+    /// [`Written::notes`]. Two exceptions refuse: either declaration is a
+    /// `SubTree` model, which the library itself reads; or this file holds
+    /// the declaration that wins, its tree does not use the model, and the
+    /// next declaration in load order, which would win once the save drops
+    /// it, is not the writer's copy of it. A repeat within this document is
+    /// refused by the writer, as before (spec §3.7).
     ///
     /// A refusal about a declared model points into the document that
     /// declared it.

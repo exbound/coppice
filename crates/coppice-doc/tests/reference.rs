@@ -1517,3 +1517,104 @@ fn a_save_notes_a_differing_declaration_its_tree_does_not_use_as_dropped() {
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("the save drops it"), "{notes:?}");
 }
+
+#[test]
+fn a_save_notes_nothing_for_an_exact_copy() {
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/><TreeNodesModel>"#,
+        r#"<Action ID="A"><input_port name="x"/></Action>"#,
+        r#"</TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><A x="1"/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="A"><input_port name="x"/></Action></TreeNodesModel>"#,
+    ));
+    let p = project(&[("/p/proj.btproj", &proj), ("/p/b.xml", &b)]);
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert_eq!(written.notes, []);
+}
+
+/// A project of `t.xml`, holding the winning `<Action ID="M"/>` unused,
+/// then `files` in load order; the refusals of saving `t.xml`.
+fn hand_over(files: &[(&str, &str)]) -> Vec<(usize, DiagnosticKind, usize)> {
+    let includes: String = std::iter::once("t.xml")
+        .chain(files.iter().map(|(name, _)| *name))
+        .map(|name| format!(r#"<include path="{name}"/>"#))
+        .collect();
+    let proj = v4(&includes);
+    let t = v4(concat!(
+        r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Action ID="M"/></TreeNodesModel>"#,
+    ));
+    let mut all = vec![
+        ("/p/proj.btproj".to_owned(), proj),
+        ("/p/t.xml".to_owned(), t),
+    ];
+    all.extend(files.iter().map(|(n, x)| (format!("/p/{n}"), v4(x))));
+    let refs: Vec<(&str, &str)> = all.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let p = project(&refs);
+    match p.write_reference(1, &ReferenceOptions::default()) {
+        Ok(_) => Vec::new(),
+        Err(r) => r
+            .iter()
+            .map(|d| (d.document, d.diagnostic.kind, d.diagnostic.offset))
+            .collect(),
+    }
+}
+
+#[test]
+fn the_declaration_that_takes_over_may_be_documents_away() {
+    // a.xml declares nothing; b.xml's differing M would take over.
+    let refused = hand_over(&[
+        (
+            "a.xml",
+            r#"<BehaviorTree ID="A"><AlwaysSuccess/></BehaviorTree>"#,
+        ),
+        (
+            "b.xml",
+            r#"<TreeNodesModel><Condition ID="M"/></TreeNodesModel>"#,
+        ),
+    ]);
+    assert_eq!(
+        refused.iter().map(|r| (r.0, r.1)).collect::<Vec<_>>(),
+        [(1, DiagnosticKind::DuplicateModel)]
+    );
+}
+
+#[test]
+fn the_declaration_that_takes_over_is_the_first_in_its_document() {
+    // a.xml repeats M; its first declaration is the one that would win.
+    let copy_first = r#"<TreeNodesModel><Action ID="M"/><Condition ID="M"/></TreeNodesModel>"#;
+    assert_eq!(hand_over(&[("a.xml", copy_first)]), []);
+    let differing_first = r#"<TreeNodesModel><Condition ID="M"/><Action ID="M"/></TreeNodesModel>"#;
+    assert_eq!(
+        hand_over(&[("a.xml", differing_first)])
+            .iter()
+            .map(|r| (r.0, r.1))
+            .collect::<Vec<_>>(),
+        [(1, DiagnosticKind::DuplicateModel)]
+    );
+}
+
+#[test]
+fn a_losing_declaration_the_tree_does_not_use_is_dropped_not_refused() {
+    // b.xml loses M to the project and does not use it; c.xml, after it,
+    // declares M differently. Saving b.xml hands nothing over.
+    let proj = v4(concat!(
+        r#"<include path="b.xml"/><include path="c.xml"/>"#,
+        r#"<TreeNodesModel><Action ID="M"/></TreeNodesModel>"#,
+    ));
+    let b = v4(concat!(
+        r#"<BehaviorTree ID="T"><AlwaysSuccess/></BehaviorTree>"#,
+        r#"<TreeNodesModel><Condition ID="M"/></TreeNodesModel>"#,
+    ));
+    let c = v4(r#"<TreeNodesModel><Decorator ID="M"/></TreeNodesModel>"#);
+    let p = project(&[
+        ("/p/proj.btproj", &proj),
+        ("/p/b.xml", &b),
+        ("/p/c.xml", &c),
+    ]);
+    let written = p.write_reference(1, &ReferenceOptions::default()).unwrap();
+    assert_eq!(written.notes.len(), 1, "{:?}", written.notes);
+    assert!(written.notes[0].message.contains("the save drops it"));
+}
